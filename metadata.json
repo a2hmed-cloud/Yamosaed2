@@ -1,0 +1,6 @@
+{
+  "name": "يا مساعد",
+  "description": "مساعد شخصي عربي مصري ذكي للتحكم بالموسيقى والمهام والطقس والتنبيهات والبحث",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
