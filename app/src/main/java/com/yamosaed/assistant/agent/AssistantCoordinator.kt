@@ -31,6 +31,20 @@ class AssistantCoordinator(
             return@withContext
         }
 
+        // أوامر سريعة مباشرة للشاشات
+        if (AssistantRouter.isOpenTasksCommand(trimmed)) {
+            onFeedback("فتحت لك مهامك يا باشا.", "شاشة المهام", ActionType.OPEN_TASKS)
+            return@withContext
+        }
+        if (AssistantRouter.isOpenSettingsCommand(trimmed)) {
+            onFeedback("فتحت لك الإعدادات يا باشا.", "شاشة الإعدادات", ActionType.OPEN_SETTINGS)
+            return@withContext
+        }
+        if (AssistantRouter.isCloseCommand(trimmed)) {
+            onFeedback("تمام يا فندم، رجعت لشاشة المساعد.", "الرئيسية", ActionType.CLOSE_OVERLAYS)
+            return@withContext
+        }
+
         val apiKey = preferencesManager.geminiApiKey
         val screenContext = SearchClickService.visibleScreenText
 
@@ -41,6 +55,7 @@ class AssistantCoordinator(
                     geminiClient.decide(
                         apiKey = apiKey,
                         userQuery = trimmed,
+                        preferredModel = preferencesManager.selectedGeminiModel,
                         screenContext = screenContext,
                         recentHistory = recentHistory
                     )
@@ -221,6 +236,21 @@ class AssistantCoordinator(
             ActionType.CLARIFY -> {
                 val reply = decision.reply.ifBlank { "مش متأكد من قصدك يا باشا، تحب أساعدك في إيه بالظبط؟" }
                 onFeedback(reply, "توضيح", ActionType.CLARIFY)
+            }
+
+            ActionType.OPEN_TASKS -> {
+                val reply = decision.reply.ifBlank { "فتحت لك مهامك يا باشا." }
+                onFeedback(reply, "شاشة المهام", ActionType.OPEN_TASKS)
+            }
+
+            ActionType.OPEN_SETTINGS -> {
+                val reply = decision.reply.ifBlank { "فتحت لك الإعدادات يا باشا." }
+                onFeedback(reply, "شاشة الإعدادات", ActionType.OPEN_SETTINGS)
+            }
+
+            ActionType.CLOSE_OVERLAYS -> {
+                val reply = decision.reply.ifBlank { "تمام يا فندم، رجعت لشاشة المساعد." }
+                onFeedback(reply, "الرئيسية", ActionType.CLOSE_OVERLAYS)
             }
         }
     }

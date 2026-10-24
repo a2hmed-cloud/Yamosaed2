@@ -13,8 +13,15 @@ import java.net.URL
 class GeminiClient {
 
     companion object {
-        private const val PRIMARY_MODEL = "gemini-2.5-flash"
-        private const val FALLBACK_MODEL = "gemini-1.5-flash"
+        const val DEFAULT_MODEL = "gemini-1.5-flash"
+
+        // قائمة النماذج حسب أولوية الاستقرار والسرعة
+        val FALLBACK_ORDER = listOf(
+            "gemini-1.5-flash",
+            "gemini-2.0-flash",
+            "gemini-2.5-flash",
+            "gemini-1.5-pro"
+        )
 
         private val SYSTEM_INSTRUCTION = """
 أنت "يا مساعد" — مساعد أندرويد شخصي عربي مصري، ذكي جداً، واسع الثقافة، سريع البديهة وخفيف الدم دون ابتذال، مثل Siri ولكن بطابع مصري ودود وأصيل.
@@ -55,6 +62,7 @@ class GeminiClient {
     suspend fun decide(
         apiKey: String,
         userQuery: String,
+        preferredModel: String = DEFAULT_MODEL,
         screenContext: String = "",
         recentHistory: List<ChatMessage> = emptyList()
     ): Result<GeminiDecision> = withContext(Dispatchers.IO) {
@@ -63,26 +71,25 @@ class GeminiClient {
             return@withContext Result.failure(IllegalStateException("مفتاح Gemini API غير مدخل"))
         }
 
-        tryPrimaryThenFallback(trimmedKey, userQuery.trim(), screenContext, recentHistory)
-    }
+        // محاولة تشغيل النموذج المفضل، مع السقوط التلقائي السريع للنماذج الأخرى لتفادي التعليق
+        val modelsToTry = mutableListOf<String>()
+        modelsToTry.add(preferredModel)
+        FALLBACK_ORDER.forEach { if (!modelsToTry.contains(it)) modelsToTry.add(it) }
 
-    private fun tryPrimaryThenFallback(
-        apiKey: String,
-        userQuery: String,
-        screenContext: String,
-        recentHistory: List<ChatMessage>
-    ): Result<GeminiDecision> {
-        val firstAttempt = callGeminiApi(PRIMARY_MODEL, apiKey, userQuery, screenContext, recentHistory)
-        if (firstAttempt.isSuccess) {
-            return firstAttempt
+        var lastError: Throwable? = null
+        for (model in modelsToTry) {
+            val attempt = callGeminiApi(model, trimmedKey, userQuery.trim(), screenContext, recentHistory)
+            if (attempt.isSuccess) {
+                return@withContext attempt
+            }
+            lastError = attempt.exceptionOrNull()
+            // إذا كان الخطأ مفتاح غير صالح، لا داعي لتجربة باقي النماذج
+            if (lastError?.message?.contains("غير صالح") == true) {
+                break
+            }
         }
 
-        val err = firstAttempt.exceptionOrNull()
-        // If 404 or model unavailable, try fallback model
-        if (err?.message?.contains("404") == true || err?.message?.contains("not found", ignoreCase = true) == true) {
-            return callGeminiApi(FALLBACK_MODEL, apiKey, userQuery, screenContext, recentHistory)
-        }
-        return firstAttempt
+        Result.failure(lastError ?: Exception("تعذر استلام رد من أي نموذج"))
     }
 
     private fun callGeminiApi(
@@ -98,8 +105,8 @@ class GeminiClient {
             val url = URL(endpoint)
             conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
-                connectTimeout = 12000
-                readTimeout = 25000
+                connectTimeout = 8000  // 8 ثواني كحد أقصى للاتصال
+                readTimeout = 14000     // 14 ثانية كحد أقصى للقراءة لمنع التعليق
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json; charset=utf-8")
             }
@@ -158,9 +165,10 @@ class GeminiClient {
                     val rawMsg = errJson.optJSONObject("error")?.optString("message") ?: ""
                     when {
                         code == 400 && rawMsg.contains("API key not valid", ignoreCase = true) -> "مفتاح Gemini API غير صالح، تأكد منه في الإعدادات."
-                        code == 429 -> "تم تجاوز حد الاستخدام المسموح لـ Gemini حالياً، انتظر دقيقة وجرب تاني."
-                        code == 404 -> "النموذج غير متاح ($model)"
-                        else -> "خطأ في الاتصال بالذكاء الاصطناعي ($code)"
+                        code == 429 -> "تجاوز حد الاستخدام لنموذج $model، جاري تجربة نموذج بديل..."
+                        code == 404 -> "نموذج $model غير متاح لهذا المفتاح."
+                        code == 503 -> "خوادم $model مشغولة حالياً."
+                        else -> "خطأ ($code) من نموذج $model"
                     }
                 } catch (_: Exception) {
                     "خطأ اتصال برقم $code"
@@ -174,10 +182,27 @@ class GeminiClient {
                 return Result.failure(Exception("لم يصل رد من نموذج الذكاء الاصطناعي"))
             }
 
-            val parts = candidates.getJSONObject(0)
-                .getJSONObject("content")
-                .getJSONArray("parts")
-            val rawText = parts.getJSONObject(0).getString("text")
+            val firstCandidate = candidates.getJSONObject(0)
+            val finishReason = firstCandidate.optString("finishReason", "")
+            if (finishReason == "SAFETY") {
+                return Result.success(
+                    GeminiDecision(
+                        action = "chat",
+                        actionType = AssistantRouter.parseActionType("chat"),
+                        reply = "عذراً يا باشا، مقدرش أجاوب على الجزء ده التزاماً بمعايير الأمان."
+                    )
+                )
+            }
+
+            val contentObj = firstCandidate.optJSONObject("content")
+            val parts = contentObj?.optJSONArray("parts")
+            val rawText = if (parts != null && parts.length() > 0) {
+                parts.getJSONObject(0).optString("text", "")
+            } else ""
+
+            if (rawText.isBlank()) {
+                return Result.failure(Exception("وصل رد فارغ من النموذج"))
+            }
 
             val cleanJson = rawText.trim()
                 .removePrefix("```json")
@@ -188,7 +213,6 @@ class GeminiClient {
             val json = try {
                 JSONObject(cleanJson)
             } catch (_: Exception) {
-                // If model returned plain text instead of JSON, treat as friendly answer
                 JSONObject().apply {
                     put("action", "question")
                     put("reply", cleanJson)
@@ -213,9 +237,9 @@ class GeminiClient {
 
         } catch (e: Exception) {
             val friendlyMsg = when {
-                e is java.net.SocketTimeoutException -> "انتهت مهلة الاتصال بـ Gemini، تأكد من سرعة الإنترنت."
-                e is java.net.UnknownHostException -> "لا يوجد اتصال بالإنترنت للوصول لـ Gemini."
-                else -> e.localizedMessage ?: "حدث خطأ غير متوقع أثناء الاتصال."
+                e is java.net.SocketTimeoutException -> "انتهت مهلة الاتصال بالنموذج ($model)"
+                e is java.net.UnknownHostException -> "لا يوجد اتصال بالإنترنت للوصول لـ Gemini"
+                else -> e.localizedMessage ?: "حدث خطأ غير متوقع"
             }
             return Result.failure(Exception(friendlyMsg))
         } finally {
@@ -223,18 +247,19 @@ class GeminiClient {
         }
     }
 
-    suspend fun testConnection(apiKey: String): Result<String> = withContext(Dispatchers.IO) {
-        if (apiKey.isBlank()) {
+    suspend fun testConnection(apiKey: String, model: String = DEFAULT_MODEL): Result<String> = withContext(Dispatchers.IO) {
+        val trimmedKey = apiKey.trim()
+        if (trimmedKey.isBlank()) {
             return@withContext Result.failure(IllegalArgumentException("المفتاح فارغ"))
         }
         var conn: HttpURLConnection? = null
         try {
-            val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$PRIMARY_MODEL:generateContent?key=$apiKey"
+            val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$trimmedKey"
             val url = URL(endpoint)
             conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
-                connectTimeout = 8000
-                readTimeout = 10000
+                connectTimeout = 7000
+                readTimeout = 8000
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json; charset=utf-8")
             }
@@ -248,16 +273,22 @@ class GeminiClient {
             conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
             val code = conn.responseCode
             if (code in 200..299) {
-                return@withContext Result.success("متصل بنجاح مع Gemini API ($PRIMARY_MODEL)")
+                return@withContext Result.success("متصل بنجاح مع $model")
             }
             val errStream = conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
             val msg = try {
                 val errObj = JSONObject(errStream).optJSONObject("error")
-                errObj?.optString("message") ?: "كود الخطأ: $code"
+                val message = errObj?.optString("message") ?: ""
+                when {
+                    code == 400 && message.contains("API key not valid", ignoreCase = true) -> "المفتاح غير صالح أو مكتوب خطأ"
+                    code == 404 -> "النموذج $model غير متاح لهذا المفتاح، جرب اختيار نموذج آخر"
+                    code == 429 -> "تجاوزت حد الاستخدام المجاني، انتظر دقيقة وجرب تاني"
+                    else -> "كود الخطأ: $code"
+                }
             } catch (_: Exception) { "كود الخطأ: $code" }
             return@withContext Result.failure(Exception(msg))
         } catch (e: Exception) {
-            return@withContext Result.failure(Exception("تعذر الوصول لـ Gemini: ${e.localizedMessage ?: "تأكد من الإنترنت"}"))
+            return@withContext Result.failure(Exception("تعذر الوصول: ${e.localizedMessage ?: "تأكد من الإنترنت"}"))
         } finally {
             conn?.disconnect()
         }

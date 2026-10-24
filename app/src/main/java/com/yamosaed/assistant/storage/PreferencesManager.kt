@@ -20,6 +20,12 @@ class PreferencesManager(context: Context) {
             prefs.edit().putString(KEY_GEMINI_API_KEY, value.trim()).apply()
         }
 
+    var selectedGeminiModel: String
+        get() = prefs.getString(KEY_GEMINI_MODEL, "gemini-1.5-flash") ?: "gemini-1.5-flash"
+        set(value) {
+            prefs.edit().putString(KEY_GEMINI_MODEL, value.trim()).apply()
+        }
+
     var homeCity: String
         get() = prefs.getString(KEY_HOME_CITY, "الإسماعيلية") ?: "الإسماعيلية"
         set(value) {
@@ -50,9 +56,17 @@ class PreferencesManager(context: Context) {
 
     companion object {
         private const val KEY_GEMINI_API_KEY = "gemini_api_key"
+        private const val KEY_GEMINI_MODEL = "gemini_model"
         private const val KEY_HOME_CITY = "home_city"
         private const val KEY_DEFAULT_MUSIC_APP = "default_music_app"
         private const val KEY_BG_WAKE = "background_wake_enabled"
         private const val KEY_SPEECH_RATE = "speech_rate"
+
+        val AVAILABLE_MODELS = listOf(
+            "gemini-1.5-flash" to "Gemini 1.5 Flash (الأكثر استقراراً وتوافقاً مع كل المفاتيح)",
+            "gemini-2.0-flash" to "Gemini 2.0 Flash (الجيل الجديد فائق السرعة)",
+            "gemini-2.5-flash" to "Gemini 2.5 Flash (النموذج الأحدث)",
+            "gemini-1.5-pro" to "Gemini 1.5 Pro (الأعلى دقة وتفصيلاً)"
+        )
     }
 }

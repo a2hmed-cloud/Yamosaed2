@@ -8,16 +8,20 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Assistant
-import androidx.compose.material.icons.filled.Checklist
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.yamosaed.assistant.agent.*
@@ -34,7 +38,9 @@ import com.yamosaed.assistant.ui.screens.SettingsScreen
 import com.yamosaed.assistant.ui.screens.TasksScreen
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 
 class MainActivity : ComponentActivity() {
 
@@ -49,13 +55,14 @@ class MainActivity : ComponentActivity() {
 
     // UI state
     private var assistantState by mutableStateOf(AssistantState.IDLE)
-    private var statusText by mutableStateOf("جاهز يا باشا! اسألني أي سؤال أو اطلب أمر.")
+    private var statusText by mutableStateOf("جاهز يا باشا! دوس على العين أو اطلب أمر صوتي.")
     private var recognizedText by mutableStateOf("")
-    private var replyText by mutableStateOf("أهلاً بيك في يا مساعد 2.0! اسألني عن أي حاجة، أو قولي اضبط منبه أو شغل أغنية.")
+    private var replyText by mutableStateOf("أهلاً بيك يا فندم! أنا يا مساعد، جاهز لأوامرك.")
     private var currentActionDetail by mutableStateOf<String?>(null)
     private val conversationHistory = mutableStateListOf<ChatMessage>()
-    private var selectedTab by mutableIntStateOf(0)
     private var showHistoryDialog by mutableStateOf(false)
+    private var showTasksDialog by mutableStateOf(false)
+    private var showSettingsDialog by mutableStateOf(false)
 
     // Job tracking for safe cancellation and debouncing
     private var currentQueryJob: Job? = null
@@ -111,6 +118,22 @@ class MainActivity : ComponentActivity() {
                     ActionType.WEATHER -> "حالة الطقس"
                     ActionType.ALARM -> "ضبط المنبه"
                     ActionType.TIMER -> "تشغيل المؤقت"
+                    ActionType.OPEN_TASKS -> {
+                        showTasksDialog = true
+                        showSettingsDialog = false
+                        "فتح المهام"
+                    }
+                    ActionType.OPEN_SETTINGS -> {
+                        showSettingsDialog = true
+                        showTasksDialog = false
+                        "فتح الإعدادات"
+                    }
+                    ActionType.CLOSE_OVERLAYS -> {
+                        showTasksDialog = false
+                        showSettingsDialog = false
+                        showHistoryDialog = false
+                        "الرئيسية"
+                    }
                     else -> "تم التنفيذ"
                 }
                 assistantState = AssistantState.SPEAKING
@@ -174,119 +197,125 @@ class MainActivity : ComponentActivity() {
             MaterialTheme {
                 Scaffold(
                     contentWindowInsets = WindowInsets.safeDrawing,
-                    bottomBar = {
-                        NavigationBar(
-                            containerColor = Color(0xFF0C1425),
-                            contentColor = Color.White
-                        ) {
-                            NavigationBarItem(
-                                selected = selectedTab == 0,
-                                onClick = {
-                                    focusManager.clearFocus()
-                                    selectedTab = 0
-                                },
-                                icon = { Icon(Icons.Filled.Assistant, contentDescription = "المساعد") },
-                                label = { Text("المساعد") },
-                                colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = Color.White,
-                                    selectedTextColor = Color(0xFF90CAF9),
-                                    indicatorColor = Color(0xFF223660),
-                                    unselectedIconColor = Color(0xFF7E8EA8),
-                                    unselectedTextColor = Color(0xFF7E8EA8)
-                                )
-                            )
-                            NavigationBarItem(
-                                selected = selectedTab == 1,
-                                onClick = {
-                                    focusManager.clearFocus()
-                                    selectedTab = 1
-                                },
-                                icon = { Icon(Icons.Filled.Checklist, contentDescription = "المهام") },
-                                label = { Text("مهامي") },
-                                colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = Color.White,
-                                    selectedTextColor = Color(0xFF90CAF9),
-                                    indicatorColor = Color(0xFF223660),
-                                    unselectedIconColor = Color(0xFF7E8EA8),
-                                    unselectedTextColor = Color(0xFF7E8EA8)
-                                )
-                            )
-                            NavigationBarItem(
-                                selected = selectedTab == 2,
-                                onClick = {
-                                    focusManager.clearFocus()
-                                    selectedTab = 2
-                                },
-                                icon = { Icon(Icons.Filled.Settings, contentDescription = "الإعدادات") },
-                                label = { Text("الإعدادات") },
-                                colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = Color.White,
-                                    selectedTextColor = Color(0xFF90CAF9),
-                                    indicatorColor = Color(0xFF223660),
-                                    unselectedIconColor = Color(0xFF7E8EA8),
-                                    unselectedTextColor = Color(0xFF7E8EA8)
-                                )
-                            )
-                        }
-                    }
+                    containerColor = Color(0xFF030712)
                 ) { innerPadding ->
-                    Box(modifier = Modifier.padding(innerPadding)) {
-                        when (selectedTab) {
-                            0 -> AssistantScreen(
-                                state = assistantState,
-                                statusText = statusText,
-                                recognizedText = recognizedText,
-                                replyText = replyText,
-                                actionDetail = currentActionDetail,
-                                isGeminiConnected = preferencesManager.geminiApiKey.isNotBlank(),
-                                onMicClick = {
-                                    if (assistantState == AssistantState.LISTENING) {
-                                        speechManager.stopListening()
-                                        assistantState = AssistantState.IDLE
-                                        statusText = "تم إيقاف الاستماع"
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(innerPadding)
+                    ) {
+                        // الشاشة الرئيسية الكاملة: العين الإلكترونية الآلية في المنتصف بدون فوضى
+                        AssistantScreen(
+                            state = assistantState,
+                            statusText = statusText,
+                            recognizedText = recognizedText,
+                            replyText = replyText,
+                            actionDetail = currentActionDetail,
+                            isGeminiConnected = preferencesManager.geminiApiKey.isNotBlank(),
+                            onMicClick = {
+                                if (assistantState == AssistantState.LISTENING) {
+                                    speechManager.stopListening()
+                                    assistantState = AssistantState.IDLE
+                                    statusText = "تم إيقاف الاستماع"
+                                } else {
+                                    cancelCurrentOperation()
+                                    if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                                        startVoiceListening()
                                     } else {
-                                        cancelCurrentOperation()
-                                        if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                                            startVoiceListening()
-                                        } else {
-                                            requestAudioPermission.launch(Manifest.permission.RECORD_AUDIO)
+                                        requestAudioPermission.launch(Manifest.permission.RECORD_AUDIO)
+                                    }
+                                }
+                            },
+                            onSubmitTextQuery = { query ->
+                                handleUserQuery(query)
+                            },
+                            onCancelOperation = {
+                                cancelCurrentOperation()
+                            },
+                            onStopSpeaking = {
+                                ttsManager.stop()
+                                assistantState = AssistantState.IDLE
+                                statusText = "تم إيقاف الصوت"
+                            },
+                            onOpenSettings = {
+                                focusManager.clearFocus()
+                                showSettingsDialog = true
+                            },
+                            onOpenTasks = {
+                                focusManager.clearFocus()
+                                showTasksDialog = true
+                            },
+                            onOpenHistory = {
+                                focusManager.clearFocus()
+                                showHistoryDialog = true
+                            }
+                        )
+
+                        // نافذة الإعدادات كـ Dialog عصري أنيق (تفتح بضغطة زر علوي أو بالأمر الصوتي "الإعدادات")
+                        if (showSettingsDialog) {
+                            Dialog(
+                                onDismissRequest = { showSettingsDialog = false },
+                                properties = DialogProperties(usePlatformDefaultWidth = false)
+                            ) {
+                                Surface(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(12.dp),
+                                    shape = RoundedCornerShape(20.dp),
+                                    color = Color(0xFF0A1224)
+                                ) {
+                                    Box(modifier = Modifier.fillMaxSize()) {
+                                        SettingsScreen(
+                                            preferencesManager = preferencesManager,
+                                            geminiClient = geminiClient,
+                                            onTestTts = {
+                                                ttsManager.speak("أهلاً بيك يا باشا! أنا يا مساعد، مساعدك الشخصي الذكي.")
+                                            }
+                                        )
+                                        IconButton(
+                                            onClick = { showSettingsDialog = false },
+                                            modifier = Modifier
+                                                .align(Alignment.TopEnd)
+                                                .padding(12.dp)
+                                                .background(Color(0xFF162544), CircleShape)
+                                        ) {
+                                            Icon(Icons.Filled.Close, contentDescription = "إغلاق", tint = Color.White)
                                         }
                                     }
-                                },
-                                onSubmitTextQuery = { query ->
-                                    handleUserQuery(query)
-                                },
-                                onCancelOperation = {
-                                    cancelCurrentOperation()
-                                },
-                                onStopSpeaking = {
-                                    ttsManager.stop()
-                                    assistantState = AssistantState.IDLE
-                                    statusText = "تم إيقاف الصوت"
-                                },
-                                onOpenSettings = {
-                                    focusManager.clearFocus()
-                                    selectedTab = 2
-                                },
-                                onOpenHistory = {
-                                    focusManager.clearFocus()
-                                    showHistoryDialog = true
                                 }
-                            )
-
-                            1 -> TasksScreen(
-                                taskManager = taskManager
-                            )
-
-                            2 -> SettingsScreen(
-                                preferencesManager = preferencesManager,
-                                geminiClient = geminiClient,
-                                onTestTts = {
-                                    ttsManager.speak("أهلاً بيك يا باشا! أنا يا مساعد، مساعدك الشخصي الذكي.")
-                                }
-                            )
+                            }
                         }
 
+                        // نافذة المهام كـ Dialog عصري أنيق (تفتح بضغطة زر علوي أو بالأمر الصوتي "افتح مهامي")
+                        if (showTasksDialog) {
+                            Dialog(
+                                onDismissRequest = { showTasksDialog = false },
+                                properties = DialogProperties(usePlatformDefaultWidth = false)
+                            ) {
+                                Surface(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(12.dp),
+                                    shape = RoundedCornerShape(20.dp),
+                                    color = Color(0xFF0A1224)
+                                ) {
+                                    Box(modifier = Modifier.fillMaxSize()) {
+                                        TasksScreen(taskManager = taskManager)
+                                        IconButton(
+                                            onClick = { showTasksDialog = false },
+                                            modifier = Modifier
+                                                .align(Alignment.TopEnd)
+                                                .padding(12.dp)
+                                                .background(Color(0xFF162544), CircleShape)
+                                        ) {
+                                            Icon(Icons.Filled.Close, contentDescription = "إغلاق", tint = Color.White)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // نافذة سجل المحادثات
                         if (showHistoryDialog) {
                             HistoryDialog(
                                 history = conversationHistory,
@@ -332,7 +361,16 @@ class MainActivity : ComponentActivity() {
 
         currentQueryJob = lifecycleScope.launch {
             try {
-                coordinator.processQuery(trimmed, conversationHistory.toList())
+                withTimeout(18000L) {
+                    coordinator.processQuery(trimmed, conversationHistory.toList())
+                }
+            } catch (_: TimeoutCancellationException) {
+                assistantState = AssistantState.IDLE
+                val timeoutMsg = "الطلب أخد وقت زيادة يا باشا، جرب تسأل تاني أو اختار موديل أسرع زي flash من الإعدادات."
+                replyText = timeoutMsg
+                statusText = "انتهى الوقت المحدد للرد"
+                conversationHistory.add(ChatMessage(text = timeoutMsg, isUser = false))
+                ttsManager.speak(timeoutMsg)
             } catch (_: CancellationException) {
                 assistantState = AssistantState.IDLE
                 statusText = "تم إلغاء الطلب"

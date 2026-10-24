@@ -13,7 +13,10 @@ enum class ActionType {
     TASK_LIST,     // عرض المهام
     TASK_CLEAR,    // مسح المهام
     MAPS,          // الأماكن والخرائط
-    CLARIFY        // طلب توضيح عند الغموض التام
+    CLARIFY,       // طلب توضيح عند الغموض التام
+    OPEN_SETTINGS, // فتح شاشة الإعدادات
+    OPEN_TASKS,    // فتح شاشة المهام
+    CLOSE_OVERLAYS // العودة لشاشة العين
 }
 
 object AssistantRouter {
@@ -30,8 +33,28 @@ object AssistantRouter {
         "task_clear" -> ActionType.TASK_CLEAR
         "maps", "places" -> ActionType.MAPS
         "web_search", "web" -> ActionType.WEB_SEARCH
+        "open_settings", "settings" -> ActionType.OPEN_SETTINGS
+        "open_tasks", "tasks" -> ActionType.OPEN_TASKS
+        "close", "back" -> ActionType.CLOSE_OVERLAYS
         "clarify" -> ActionType.CLARIFY
         else -> ActionType.CHAT
+    }
+
+    fun isOpenTasksCommand(text: String): Boolean {
+        val norm = Arabic.norm(text).trim()
+        return norm.contains("افتح مهامي") || norm.contains("وريني مهامي") ||
+                norm == "مهامي" || norm == "المهام" || norm == "افتح المهام" || norm.contains("قائمه المهام")
+    }
+
+    fun isOpenSettingsCommand(text: String): Boolean {
+        val norm = Arabic.norm(text).trim()
+        return norm.contains("افتح الاعدادات") || norm.contains("افتح الإعدادات") ||
+                norm == "اعدادات" || norm == "الاعدادات" || norm == "الإعدادات" || norm == "ضبط"
+    }
+
+    fun isCloseCommand(text: String): Boolean {
+        val norm = Arabic.norm(text).trim()
+        return norm == "اقفل" || norm == "ارجع" || norm == "اغلق" || norm == "خروج"
     }
 
     /**

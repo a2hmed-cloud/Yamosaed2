@@ -6,11 +6,14 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -18,7 +21,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -38,8 +43,10 @@ fun SettingsScreen(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
+    val focusManager = LocalFocusManager.current
 
     var apiKeyInput by remember { mutableStateOf(preferencesManager.geminiApiKey) }
+    var selectedModel by remember { mutableStateOf(preferencesManager.selectedGeminiModel) }
     var isKeyHidden by remember { mutableStateOf(true) }
     var testStatus by remember { mutableStateOf<String?>(null) }
     var isTestingConnection by remember { mutableStateOf(false) }
@@ -56,18 +63,18 @@ fun SettingsScreen(
             .padding(20.dp)
     ) {
         Text(
-            text = "الإعدادات والصلاحيات",
+            text = "الإعدادات واختيار النماذج",
             fontSize = 24.sp,
             fontWeight = FontWeight.Bold,
             color = Color.White
         )
         Text(
-            text = "تخصيص مساعدك الصوتي وضبط خدمات النظام",
+            text = "تخصيص مفتاح Gemini، اختيار النموذج، وضبط خدمات النظام",
             fontSize = 13.sp,
             color = Color(0xFF8FA4CE)
         )
 
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(18.dp))
 
         // --- SECTION 1: Gemini API Configuration ---
         Card(
@@ -83,13 +90,32 @@ fun SettingsScreen(
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "أدخل مفتاحك من Google AI Studio لتفعيل فهم اللغة الطبيعية وسياق المحادثة. يُحفظ المفتاح محليًا على جهازك.",
+                    "المفتاح مجاني بالكامل من Google AI Studio ويتيح للمساعد الإجابة الذكية وسياق المحادثة. يُحفظ المفتاح مشفراً على جهازك فقط.",
                     color = Color(0xFFBAC7E2),
-                    fontSize = 12.sp
+                    fontSize = 12.sp,
+                    lineHeight = 18.sp
                 )
+
+                Spacer(Modifier.height(10.dp))
+
+                // Get Free Key Button
+                OutlinedButton(
+                    onClick = {
+                        try {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://aistudio.google.com/apikey"))
+                            context.startActivity(intent)
+                        } catch (_: Exception) {}
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Filled.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("احصل على مفتاح مجاني من Google AI Studio", fontSize = 12.sp)
+                }
+
                 Spacer(Modifier.height(12.dp))
 
-                val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
                 OutlinedTextField(
                     value = apiKeyInput,
                     onValueChange = { apiKeyInput = it },
@@ -97,7 +123,7 @@ fun SettingsScreen(
                     singleLine = true,
                     visualTransformation = if (isKeyHidden) PasswordVisualTransformation() else VisualTransformation.None,
                     keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                        imeAction = androidx.compose.ui.text.input.ImeAction.Done
+                        imeAction = ImeAction.Done
                     ),
                     keyboardActions = androidx.compose.foundation.text.KeyboardActions(
                         onDone = { focusManager.clearFocus() }
@@ -123,19 +149,96 @@ fun SettingsScreen(
                     )
                 )
 
+                Spacer(Modifier.height(14.dp))
+
+                // --- Model Selection ---
+                Text("اختر نموذج الذكاء الاصطناعي الأساسي:", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(8.dp))
+
+                PreferencesManager.AVAILABLE_MODELS.forEach { (modelId, modelTitle) ->
+                    val isSelected = selectedModel == modelId
+                    Surface(
+                        color = if (isSelected) Color(0xFF1E3566) else Color(0xFF0F172A),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                            .border(
+                                width = if (isSelected) 1.5.dp else 1.dp,
+                                color = if (isSelected) Color(0xFF4F8CFF) else Color(0xFF22355F),
+                                shape = RoundedCornerShape(10.dp)
+                            )
+                            .clickable {
+                                selectedModel = modelId
+                                preferencesManager.selectedGeminiModel = modelId
+                                testStatus = null
+                            }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = isSelected,
+                                onClick = {
+                                    selectedModel = modelId
+                                    preferencesManager.selectedGeminiModel = modelId
+                                    testStatus = null
+                                },
+                                colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF64B5F6))
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    text = modelId,
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = modelTitle.substringAfter("(").removeSuffix(")"),
+                                    color = Color(0xFF90A4CE),
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+                    }
+                }
+
                 Spacer(Modifier.height(12.dp))
+
+                // Tip about anti-hang protection
+                Surface(
+                    color = Color(0xFF162540),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Bolt, contentDescription = null, tint = Color(0xFFFFD54F), modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "حماية التعليق مفعّلة: لو النموذج المختار اتأخر أو استهلك حصته، المساعد هيحول تلقائياً للنموذج البديل فوراً بدون ما يعلق.",
+                            color = Color(0xFFCFD9EA),
+                            fontSize = 11.sp,
+                            lineHeight = 16.sp
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(14.dp))
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     Button(
                         onClick = {
                             focusManager.clearFocus()
                             preferencesManager.geminiApiKey = apiKeyInput
-                            testStatus = "تم حفظ المفتاح بنجاح!"
+                            preferencesManager.selectedGeminiModel = selectedModel
+                            testStatus = "تم حفظ المفتاح والنموذج ($selectedModel) بنجاح!"
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3D74EB)),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("حفظ المفتاح")
+                        Text("حفظ التغييرات")
                     }
 
                     OutlinedButton(
@@ -145,9 +248,9 @@ fun SettingsScreen(
                                 return@OutlinedButton
                             }
                             isTestingConnection = true
-                            testStatus = "جاري اختبار الاتصال مع Gemini..."
+                            testStatus = "جاري اختبار اتصال $selectedModel..."
                             coroutineScope.launch {
-                                val result = geminiClient.testConnection(apiKeyInput.trim())
+                                val result = geminiClient.testConnection(apiKeyInput.trim(), selectedModel)
                                 isTestingConnection = false
                                 testStatus = if (result.isSuccess) {
                                     "✓ ${result.getOrNull()}"
@@ -162,7 +265,7 @@ fun SettingsScreen(
                         if (isTestingConnection) {
                             CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                         } else {
-                            Text("اختبار الاتصال")
+                            Text("اختبار النموذج")
                         }
                     }
                 }
@@ -181,7 +284,7 @@ fun SettingsScreen(
                 }
 
                 testStatus?.let { status ->
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(8.dp))
                     Text(
                         text = status,
                         fontSize = 12.sp,
@@ -228,7 +331,7 @@ fun SettingsScreen(
 
                 PermissionRow(
                     title = "الوصول للإشعارات (Notification Listener)",
-                    subtitle = "للتحكم في الموسيقى (تشغيل، إيقاف، التالي)",
+                    subtitle = "للتحكم في الموسيقى وقراءة الأغنية الحالية",
                     actionLabel = "تفعيل الوصول",
                     onClick = {
                         try {
@@ -241,7 +344,7 @@ fun SettingsScreen(
 
                 PermissionRow(
                     title = "المنبهات الدقيقة (Exact Alarms)",
-                    subtitle = "لتشغيل التايمر وتنبيهات المهام في الوقت المحدد",
+                    subtitle = "لتشغيل التايمر وتنبيهات المهام في موعدها الدقيق",
                     actionLabel = "إذن المنبه",
                     onClick = {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -287,7 +390,7 @@ fun SettingsScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Filled.MicNone, contentDescription = null, tint = Color(0xFF81C784))
                         Spacer(Modifier.width(8.dp))
-                        Text("الاستماع في الخلفية (تجريبي)", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 15.sp)
+                        Text("الاستماع في الخلفية (Foreground)", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 15.sp)
                     }
                     Switch(
                         checked = bgWakeEnabled,
@@ -304,7 +407,7 @@ fun SettingsScreen(
                 }
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "تنويه أمان: تشغيل الخدمة يعرض إشعارًا دائمًا بأن الميكروفون مفعّل. قيود أندرويد الحديثة وتحسين استهلاك البطارية قد توقف الاستماع في الخلفية، لذا يفضّل استخدام زر الميكروفون داخل التطبيق للاستجابة المضمونة.",
+                    "تنويه أمان: تشغيل الخدمة يعرض إشعاراً دائماً بنشاط الميكروفون. قيود أندرويد الحديثة قد توقف الميكروفون عند قفل الشاشة، لذا يفضّل الضغط على زر الميكروفون داخل التطبيق للاستجابة المضمونة.",
                     color = Color(0xFFB0BDD8),
                     fontSize = 11.sp,
                     lineHeight = 16.sp
