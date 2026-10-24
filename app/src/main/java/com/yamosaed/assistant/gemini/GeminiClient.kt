@@ -10,6 +10,12 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
+internal fun geminiGenerateContentUrl(model: String): String {
+    val modelId = model.trim().removePrefix("models/")
+    require(modelId.isNotBlank()) { "معرّف النموذج فارغ" }
+    return "https://generativelanguage.googleapis.com/v1beta/models/$modelId:generateContent"
+}
+
 class GeminiClient {
 
     companion object {
@@ -78,9 +84,8 @@ class GeminiClient {
         }
 
         // محاولة تشغيل النموذج المفضل، مع السقوط التلقائي السريع للنماذج الأخرى لتفادي التعليق
-        val modelsToTry = mutableListOf<String>()
-        modelsToTry.add(preferredModel)
-        FALLBACK_ORDER.forEach { if (!modelsToTry.contains(it)) modelsToTry.add(it) }
+        // لا نبدّل النموذج المختار بصمت؛ المستخدم هو من يقرر تغيير النموذج.
+        val modelsToTry = listOf(preferredModel.trim().removePrefix("models/")).filter { it.isNotBlank() }
 
         var lastError: Throwable? = null
         for (model in modelsToTry) {
@@ -107,7 +112,7 @@ class GeminiClient {
     ): Result<GeminiDecision> {
         var conn: HttpURLConnection? = null
         try {
-            val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey"
+            val endpoint = geminiGenerateContentUrl(model)
             val url = URL(endpoint)
             conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
@@ -115,6 +120,7 @@ class GeminiClient {
                 readTimeout = 14000     // 14 ثانية كحد أقصى للقراءة لمنع التعليق
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                setRequestProperty("x-goog-api-key", apiKey)
             }
 
             val root = JSONObject()
@@ -171,7 +177,7 @@ class GeminiClient {
                     val rawMsg = errJson.optJSONObject("error")?.optString("message") ?: ""
                     when {
                         code == 400 && rawMsg.contains("API key not valid", ignoreCase = true) -> "مفتاح Gemini API غير صالح، تأكد منه في الإعدادات."
-                        code == 429 -> "تجاوز حد الاستخدام لنموذج $model، جاري تجربة نموذج بديل..."
+                        code == 429 -> "تم تجاوز حصة استخدام النموذج $model. انتظر قليلًا أو اختر نموذجًا آخر من الإعدادات."
                         code == 404 -> "نموذج $model غير متاح لهذا المفتاح."
                         code == 503 -> "خوادم $model مشغولة حالياً."
                         else -> "خطأ ($code) من نموذج $model"
@@ -261,7 +267,7 @@ class GeminiClient {
         }
         var conn: HttpURLConnection? = null
         try {
-            val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$trimmedKey"
+            val endpoint = geminiGenerateContentUrl(model)
             val url = URL(endpoint)
             conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
@@ -269,6 +275,7 @@ class GeminiClient {
                 readTimeout = 8000
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                setRequestProperty("x-goog-api-key", trimmedKey)
             }
             val payload = JSONObject().apply {
                 put("contents", JSONArray().put(
