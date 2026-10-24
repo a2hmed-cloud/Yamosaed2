@@ -19,6 +19,7 @@ enum class ActionType {
     PHONE_CALL,    // الاتصال برقم أو شخص
     DEVICE_CONTROL,// التحكم في الجهاز (كشاف، صوت، بطارية، واي فاي، هوم)
     OPEN_APP,      // فتح أي تطبيق على الجهاز
+    CREATE_NOTE,   // إنشاء ملاحظة في Google Keep
     OPEN_SETTINGS, // فتح شاشة الإعدادات
     OPEN_TASKS,    // فتح شاشة المهام
     CLOSE_OVERLAYS, // العودة لشاشة العين
@@ -169,6 +170,19 @@ object AssistantRouter {
                 query = norm,
                 label = "تحكم بالجهاز"
             )
+        }
+
+        // 6. إنشاء ملاحظة في Google Keep: التقط النص قبل قاعدة فتح التطبيق العامة
+        val noteAppMentioned = norm.contains("keep") || norm.contains("كيب") || norm.contains("جوجل")
+        val noteCreateRequested = norm.contains("نوت") || norm.contains("ملاحظه") || norm.contains("ملاحظة") || norm.contains("سجل") || norm.contains("اكتب فيها") || norm.contains("اكتب في")
+        if (noteAppMentioned && noteCreateRequested) {
+            val noteText = rawQuery.substringAfter("اكتب فيها", "")
+                .ifBlank { rawQuery.substringAfter("اكتب في", "") }
+                .ifBlank { rawQuery.substringAfter("محتواها", "") }
+                .ifBlank { rawQuery.substringAfter("النص", "") }
+                .trim().trimStart(':', '،', ' ')
+            if (noteText.isNotBlank()) return LocalIntent(ActionType.CREATE_NOTE, query = noteText, app = "google_keep", label = "إنشاء ملاحظة")
+            return LocalIntent(ActionType.OPEN_APP, query = "Google Keep", label = "فتح تطبيق")
         }
 
         // 6. فتح التطبيقات على الجهاز
