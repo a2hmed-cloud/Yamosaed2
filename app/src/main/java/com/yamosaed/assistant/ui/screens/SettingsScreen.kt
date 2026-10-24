@@ -30,6 +30,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.yamosaed.assistant.WakeWordService
 import com.yamosaed.assistant.gemini.GeminiClient
+import com.yamosaed.assistant.gemini.GeminiModel
+import com.yamosaed.assistant.gemini.GeminiModelsRepository
 import com.yamosaed.assistant.storage.PreferencesManager
 import kotlinx.coroutines.launch
 
@@ -44,7 +46,10 @@ fun SettingsScreen(
     val coroutineScope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
     val focusManager = LocalFocusManager.current
-
+    val modelsRepository = remember(context) { GeminiModelsRepository(context) }
+    var discoveredModels by remember { mutableStateOf(modelsRepository.cachedModels()) }
+    var isRefreshingModels by remember { mutableStateOf(false) }
+    var modelsStatus by remember { mutableStateOf<String?>(null) }
     var apiKeyInput by remember { mutableStateOf(preferencesManager.geminiApiKey) }
     var selectedModel by remember { mutableStateOf(preferencesManager.selectedGeminiModel) }
     var isKeyHidden by remember { mutableStateOf(true) }
@@ -151,60 +156,109 @@ fun SettingsScreen(
 
                 Spacer(Modifier.height(14.dp))
 
-                // --- Model Selection ---
-                Text("اختر نموذج الذكاء الاصطناعي الأساسي:", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                // --- Live Gemini model discovery ---
+                Text("نماذج الذكاء الاصطناعي", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "القائمة تُجلب مباشرة من Google Gemini API. ظهور النموذج لا يضمن أن حصتك أو مفتاحك يسمحان باستخدامه.",
+                    color = Color(0xFFBAC7E2), fontSize = 12.sp, lineHeight = 17.sp
+                )
                 Spacer(Modifier.height(8.dp))
-
-                PreferencesManager.AVAILABLE_MODELS.forEach { (modelId, modelTitle) ->
-                    val isSelected = selectedModel == modelId
-                    Surface(
-                        color = if (isSelected) Color(0xFF1E3566) else Color(0xFF0F172A),
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp)
-                            .border(
+                Button(
+                    onClick = {
+                        if (apiKeyInput.isBlank()) {
+                            modelsStatus = "اكتب مفتاح Gemini API أولاً ثم حدّث النماذج."
+                        } else {
+                            isRefreshingModels = true
+                            modelsStatus = "جاري جلب النماذج من Google..."
+                            coroutineScope.launch {
+                                try {
+                                    val fetched = modelsRepository.fetchModels(apiKeyInput.trim())
+                                    discoveredModels = fetched
+                                    val selectedStillExists = fetched.any { it.id == selectedModel }
+                                    modelsStatus = if (selectedStillExists) {
+                                        "تم تحديث القائمة بنجاح."
+                                    } else {
+                                        "تم التحديث، لكن النموذج المحفوظ غير موجود في القائمة الحالية. اختر نموذجًا آخر إذا لم يعمل."
+                                    }
+                                } catch (e: Exception) {
+                                    modelsStatus = e.message ?: "تعذر تحديث النماذج."
+                                    if (discoveredModels.isNotEmpty()) {
+                                        modelsStatus += " يتم عرض آخر قائمة محفوظة وقد تكون قديمة."
+                                    }
+                                } finally {
+                                    isRefreshingModels = false
+                                }
+                            }
+                        }
+                    },
+                    enabled = !isRefreshingModels,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3D74EB))
+                ) {
+                    if (isRefreshingModels) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
+                        Spacer(Modifier.width(8.dp))
+                        Text("جاري تحديث النماذج...")
+                    } else {
+                        Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(17.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("تحديث النماذج")
+                    }
+                }
+                if (discoveredModels.isEmpty()) {
+                    Text(
+                        "لا توجد قائمة محفوظة بعد. اضغط تحديث النماذج بعد إدخال المفتاح.",
+                        color = Color(0xFFFFCC80), fontSize = 12.sp
+                    )
+                } else {
+                    Text("النماذج المحفوظة: ${discoveredModels.size}", color = Color(0xFF90A4CE), fontSize = 12.sp)
+                    discoveredModels.forEach { model ->
+                        val isSelected = selectedModel == model.id
+                        Surface(
+                            color = if (isSelected) Color(0xFF1E3566) else Color(0xFF0F172A),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).border(
                                 width = if (isSelected) 1.5.dp else 1.dp,
                                 color = if (isSelected) Color(0xFF4F8CFF) else Color(0xFF22355F),
                                 shape = RoundedCornerShape(10.dp)
-                            )
-                            .clickable {
-                                selectedModel = modelId
-                                preferencesManager.selectedGeminiModel = modelId
+                            ).clickable {
+                                selectedModel = model.id
+                                preferencesManager.selectedGeminiModel = model.id
                                 testStatus = null
                             }
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            RadioButton(
-                                selected = isSelected,
-                                onClick = {
-                                    selectedModel = modelId
-                                    preferencesManager.selectedGeminiModel = modelId
-                                    testStatus = null
-                                },
-                                colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF64B5F6))
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Column {
-                                Text(
-                                    text = modelId,
-                                    color = Color.White,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold
+                            Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                RadioButton(
+                                    selected = isSelected,
+                                    onClick = {
+                                        selectedModel = model.id
+                                        preferencesManager.selectedGeminiModel = model.id
+                                        testStatus = null
+                                    },
+                                    colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF64B5F6))
                                 )
-                                Text(
-                                    text = modelTitle.substringAfter("(").removeSuffix(")"),
-                                    color = Color(0xFF90A4CE),
-                                    fontSize = 11.sp
-                                )
+                                Spacer(Modifier.width(8.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(model.displayName, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                    Text(model.id, color = Color(0xFF90A4CE), fontSize = 11.sp)
+                                    Text(
+                                        if (model.supportsGenerateContent) "يدعم توليد المحتوى • مناسب للمحادثة" else "غير مناسب للمحادثة",
+                                        color = Color(0xFF81C784), fontSize = 11.sp
+                                    )
+                                    if (model.description.isNotBlank()) {
+                                        Text(model.description, color = Color(0xFFBAC7E2), fontSize = 11.sp, maxLines = 3)
+                                    }
+                                }
+                                if (isSelected) Icon(Icons.Filled.CheckCircle, contentDescription = "النموذج الحالي", tint = Color(0xFF64B5F6))
                             }
                         }
                     }
                 }
-
+                modelsStatus?.let {
+                    Spacer(Modifier.height(6.dp))
+                    Text(it, color = if (it.startsWith("تم")) Color(0xFF81C784) else Color(0xFFFFCC80), fontSize = 12.sp)
+                }
                 Spacer(Modifier.height(12.dp))
 
                 // Tip about anti-hang protection
@@ -217,7 +271,7 @@ fun SettingsScreen(
                         Icon(Icons.Filled.Bolt, contentDescription = null, tint = Color(0xFFFFD54F), modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            text = "حماية التعليق مفعّلة: لو النموذج المختار اتأخر أو استهلك حصته، المساعد هيحول تلقائياً للنموذج البديل فوراً بدون ما يعلق.",
+                            text = "المساعد يستخدم النموذج الذي اخترته. عند تعذّر استخدامه سيعرض الخطأ بدل التبديل إلى نموذج آخر دون إذنك.",
                             color = Color(0xFFCFD9EA),
                             fontSize = 11.sp,
                             lineHeight = 16.sp
