@@ -78,13 +78,35 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private val requestNotificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { _ ->
-        // Handled gracefully
+    private val requestAppPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { _ ->
+        // Permissions granted
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+
+        // إبقاء الشاشة مضاءة دائمًا بدون أن تغلق أو ينام الهاتف
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        // طلب الصلاحيات الأساسية للتحكم بالهاتف (رسائل، مكالمات، جهات اتصال، صوتيات)
+        val requiredPerms = mutableListOf(
+            Manifest.permission.SEND_SMS,
+            Manifest.permission.READ_CONTACTS,
+            Manifest.permission.CALL_PHONE
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            requiredPerms.add(Manifest.permission.POST_NOTIFICATIONS)
+            requiredPerms.add(Manifest.permission.READ_MEDIA_AUDIO)
+        } else {
+            requiredPerms.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+        val missingPerms = requiredPerms.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missingPerms.isNotEmpty()) {
+            requestAppPermissions.launch(missingPerms.toTypedArray())
+        }
 
         preferencesManager = PreferencesManager(this)
         taskManager = TaskManager(this)
@@ -199,13 +221,6 @@ class MainActivity : ComponentActivity() {
                 }
             }
         )
-
-        // Request notification permission if Android 13+
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-            }
-        }
 
         setContent {
             val focusManager = androidx.compose.ui.platform.LocalFocusManager.current

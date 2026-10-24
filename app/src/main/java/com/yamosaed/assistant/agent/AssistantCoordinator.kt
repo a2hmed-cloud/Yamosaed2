@@ -31,18 +31,49 @@ class AssistantCoordinator(
             return@withContext
         }
 
-        // أوامر سريعة مباشرة للشاشات
-        if (AssistantRouter.isOpenTasksCommand(trimmed)) {
-            onFeedback("فتحت لك مهامك يا باشا.", "شاشة المهام", ActionType.OPEN_TASKS)
-            return@withContext
-        }
-        if (AssistantRouter.isOpenSettingsCommand(trimmed)) {
-            onFeedback("فتحت لك الإعدادات يا باشا.", "شاشة الإعدادات", ActionType.OPEN_SETTINGS)
-            return@withContext
-        }
-        if (AssistantRouter.isCloseCommand(trimmed)) {
-            onFeedback("تمام يا فندم، رجعت لشاشة المساعد.", "الرئيسية", ActionType.CLOSE_OVERLAYS)
-            return@withContext
+        // فحص الأوامر المباشرة للتحكم بالهاتف (رسائل، مكالمات، كشاف، صوت، بطارية، تطبيقات، أغاني الجهاز، الشاشات)
+        val localIntent = AssistantRouter.detectDeviceIntent(trimmed)
+        if (localIntent != null) {
+            when (localIntent.type) {
+                ActionType.OPEN_TASKS -> {
+                    onFeedback("فتحت لك مهامك يا باشا.", "شاشة المهام", ActionType.OPEN_TASKS)
+                    return@withContext
+                }
+                ActionType.OPEN_SETTINGS -> {
+                    onFeedback("فتحت لك الإعدادات يا باشا.", "شاشة الإعدادات", ActionType.OPEN_SETTINGS)
+                    return@withContext
+                }
+                ActionType.CLOSE_OVERLAYS -> {
+                    onFeedback("تمام يا فندم، رجعت لشاشة المساعد.", "الرئيسية", ActionType.CLOSE_OVERLAYS)
+                    return@withContext
+                }
+                ActionType.LOCAL_MUSIC -> {
+                    val (ok, reply) = host.playLocalSong(localIntent.query)
+                    onFeedback(reply, "مشغل الجهاز", ActionType.LOCAL_MUSIC)
+                    return@withContext
+                }
+                ActionType.SEND_MESSAGE -> {
+                    val (ok, reply) = host.sendMessage(localIntent.recipient, localIntent.query, localIntent.app)
+                    onFeedback(reply, localIntent.label, ActionType.SEND_MESSAGE)
+                    return@withContext
+                }
+                ActionType.PHONE_CALL -> {
+                    val (ok, reply) = host.makePhoneCall(localIntent.recipient)
+                    onFeedback(reply, "اتصال هاتفي", ActionType.PHONE_CALL)
+                    return@withContext
+                }
+                ActionType.DEVICE_CONTROL -> {
+                    val (ok, reply) = host.controlDevice(localIntent.query)
+                    onFeedback(reply, "تحكم بالجهاز", ActionType.DEVICE_CONTROL)
+                    return@withContext
+                }
+                ActionType.OPEN_APP -> {
+                    val (ok, reply) = host.openApp(localIntent.query)
+                    onFeedback(reply, "فتح تطبيق", ActionType.OPEN_APP)
+                    return@withContext
+                }
+                else -> { /* متابعة لباقي المعالجات */ }
+            }
         }
 
         val apiKey = preferencesManager.geminiApiKey
@@ -82,45 +113,6 @@ class AssistantCoordinator(
         if (AssistantRouter.isKnowledgeQuestion(query) || AssistantRouter.isFollowUp(query)) {
             val msg = "معلش يا باشا، الأسئلة المعرفية والشرح محتاجة اتصال بالإنترنت ومفتاح Gemini شغال في الإعدادات. تقدر تسألني عن الساعة، المنبه، التايمر، أو مهام يومك محلياً."
             onFeedback(msg, "معرفة (أوفلاين)", ActionType.QUESTION)
-            return
-        }
-
-        val norm = Arabic.norm(query).lowercase().trim()
-
-        // 1. التحكم بالجهاز محلياً (الكشاف، الصوت، البطارية، الواي فاي)
-        if (norm.contains("كشاف") || norm.contains("فلاش") || norm.contains("الصوت") ||
-            norm.contains("بطاريه") || norm.contains("شحن") || norm.contains("واي فاي") ||
-            norm.contains("بلوتوث") || norm.contains("الرئيسيه") || norm.contains("الشاشه")
-        ) {
-            val (ok, reply) = host.controlDevice(norm)
-            onFeedback(reply, "تحكم بالجهاز", ActionType.DEVICE_CONTROL)
-            return
-        }
-
-        // 2. تشغيل الأغاني من على الجهاز نفسه محلياً
-        if (norm.contains("من الجهاز") || norm.contains("من الموبايل") || norm.contains("ملفات الجهاز")) {
-            val songName = norm.replace("شغل", "").replace("من الجهاز", "").replace("من الموبايل", "")
-                .replace("ملفات الجهاز", "").replace("اغنية", "").replace("تراك", "").trim()
-            val (ok, reply) = host.playLocalSong(songName)
-            onFeedback(reply, "مشغل الجهاز", ActionType.LOCAL_MUSIC)
-            return
-        }
-
-        // 3. فتح التطبيقات محلياً
-        if (norm.startsWith("افتح ") && !norm.contains("مهامي") && !norm.contains("اعدادات")) {
-            val appName = norm.removePrefix("افتح").trim()
-            val (ok, reply) = host.openApp(appName)
-            if (ok) {
-                onFeedback(reply, "فتح تطبيق", ActionType.OPEN_APP)
-                return
-            }
-        }
-
-        // 4. الاتصال برقم محلياً
-        if (norm.startsWith("اتصل ب") || norm.startsWith("رن على")) {
-            val person = norm.removePrefix("اتصل ب").removePrefix("رن على").trim()
-            val (ok, reply) = host.makePhoneCall(person)
-            onFeedback(reply, "اتصال هاتفي", ActionType.PHONE_CALL)
             return
         }
 

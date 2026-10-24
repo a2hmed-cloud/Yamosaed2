@@ -238,7 +238,23 @@ class AndroidHost(
     private var isTorchOn = false
 
     fun playLocalSong(songQuery: String): Pair<Boolean, String> {
-        val queryNorm = Arabic.norm(songQuery).lowercase().trim()
+        val raw = Arabic.norm(songQuery).lowercase().trim()
+        val queryNorm = raw
+            .replace("من على الجهاز", "")
+            .replace("من على الموبايل", "")
+            .replace("من الجهاز", "")
+            .replace("من الموبايل", "")
+            .replace("ملفات الجهاز", "")
+            .replace("اغاني الجهاز", "")
+            .replace("اغاني الموبايل", "")
+            .replace("من عندي", "")
+            .replace("محلي", "")
+            .replace("شغل", "")
+            .replace("اغاني", "")
+            .replace("اغنية", "")
+            .replace("تراك", "")
+            .trim()
+
         val resolver = activity.contentResolver
         val uri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
         val projection = arrayOf(
@@ -249,7 +265,7 @@ class AndroidHost(
         val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
 
         try {
-            val cursor = resolver.query(uri, projection, selection, null, null)
+            val cursor = resolver.query(uri, projection, selection, null, "${MediaStore.Audio.Media.DATE_ADDED} DESC")
             cursor?.use { c ->
                 val idCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
                 val titleCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
@@ -264,11 +280,16 @@ class AndroidHost(
                     val artist = c.getString(artistCol) ?: ""
                     val full = "$title $artist".lowercase()
 
-                    if (queryNorm.isBlank() || Arabic.norm(full).contains(queryNorm)) {
+                    if (queryNorm.isBlank() || Arabic.norm(full).contains(queryNorm) || queryNorm.contains(Arabic.norm(title).lowercase())) {
                         bestId = id
                         bestTitle = title
                         break
                     }
+                }
+
+                if (bestId == null && c.moveToFirst()) {
+                    bestId = c.getLong(idCol)
+                    bestTitle = c.getString(titleCol) ?: "أغنية"
                 }
 
                 if (bestId != null) {
@@ -284,7 +305,7 @@ class AndroidHost(
             }
         } catch (_: Exception) {}
 
-        return false to "مش لاقي أغنية باسم ($songQuery) في ملفات جهازك، تحب أشغلهالك من Spotify؟"
+        return false to "مش لاقي ملفات أغاني على ذاكرة جهازك، تحب أشغلهالك من Spotify؟"
     }
 
     fun stopLocalMusic(): Boolean {
@@ -298,16 +319,60 @@ class AndroidHost(
         }
     }
 
+    // --- البحث في جهات اتصال الهاتف بالاسم ---
+    fun findContactPhoneNumber(contactName: String): Pair<String?, String?> {
+        val normTarget = Arabic.norm(contactName).lowercase().trim()
+            .replace(Regex("^(لـ|ل|الي|إلى)\\s*"), "")
+            .trim()
+        if (normTarget.isBlank()) return null to null
+        if (ContextCompat.checkSelfPermission(activity, android.Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
+            return null to null
+        }
+        val uri = android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI
+        val projection = arrayOf(
+            android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+            android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER
+        )
+        try {
+            val cursor = activity.contentResolver.query(uri, projection, null, null, null)
+            cursor?.use { c ->
+                val nameCol = c.getColumnIndex(android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+                val numCol = c.getColumnIndex(android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER)
+                while (c.moveToNext()) {
+                    val name = if (nameCol >= 0) c.getString(nameCol) else null
+                    val num = if (numCol >= 0) c.getString(numCol) else null
+                    if (name != null && num != null) {
+                        val normContact = Arabic.norm(name).lowercase().trim()
+                        if (normContact == normTarget || normContact.contains(normTarget) || normTarget.contains(normContact)) {
+                            return name to num.replace(" ", "").replace("-", "")
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        return null to null
+    }
+
     // --- إرسال الرسائل (SMS و WhatsApp) ---
     fun sendMessage(recipient: String, message: String, app: String): Pair<Boolean, String> {
         val targetApp = app.lowercase().trim()
         val text = message.ifBlank { "أهلاً بيك" }
-        val cleanPhone = recipient.filter { it.isDigit() || it == '+' }
+        var phoneDigits = recipient.filter { it.isDigit() || it == '+' }
+        var targetDisplayName = recipient
 
-        if (targetApp == "whatsapp") {
+        // إذا كان المستلم اسماً، نبحث في جهات الاتصال
+        if (phoneDigits.isBlank() && recipient.isNotBlank()) {
+            val (foundName, foundNum) = findContactPhoneNumber(recipient)
+            if (!foundNum.isNullOrBlank()) {
+                phoneDigits = foundNum
+                targetDisplayName = foundName ?: recipient
+            }
+        }
+
+        if (targetApp.contains("whatsapp") || targetApp.contains("واتساب") || targetApp.contains("واتس")) {
             return try {
-                val uri = if (cleanPhone.isNotBlank()) {
-                    Uri.parse("https://api.whatsapp.com/send?phone=$cleanPhone&text=${Uri.encode(text)}")
+                val uri = if (phoneDigits.isNotBlank()) {
+                    Uri.parse("https://api.whatsapp.com/send?phone=$phoneDigits&text=${Uri.encode(text)}")
                 } else {
                     Uri.parse("https://api.whatsapp.com/send?text=${Uri.encode(text)}")
                 }
@@ -316,20 +381,20 @@ class AndroidHost(
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
                 activity.startActivity(intent)
-                true to "فتحت لك واتساب لإرسال: \"$text\" إلى $recipient."
+                true to "فتحت لك واتساب لإرسال: \"$text\" إلى $targetDisplayName."
             } catch (_: Exception) {
                 val shareIntent = Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
                     putExtra(Intent.EXTRA_TEXT, text)
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
-                activity.startActivity(Intent.createChooser(shareIntent, "إرسال عبر"))
+                activity.startActivity(Intent.createChooser(shareIntent, "إرسال عبر واتساب"))
                 true to "فتحت لك خيارات الإرسال."
             }
         }
 
         // إرسال SMS
-        return if (cleanPhone.isNotBlank() && ContextCompat.checkSelfPermission(activity, android.Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED) {
+        return if (phoneDigits.isNotBlank() && ContextCompat.checkSelfPermission(activity, android.Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED) {
             try {
                 val smsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     activity.getSystemService(SmsManager::class.java)
@@ -337,24 +402,24 @@ class AndroidHost(
                     @Suppress("DEPRECATION")
                     SmsManager.getDefault()
                 }
-                smsManager.sendTextMessage(cleanPhone, null, text, null, null)
-                true to "بعت الرسالة بنجاح إلى $cleanPhone يا باشا."
+                smsManager.sendTextMessage(phoneDigits, null, text, null, null)
+                true to "بعت الرسالة بنجاح إلى $targetDisplayName ($phoneDigits) يا باشا."
             } catch (e: Exception) {
-                val smsIntent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$cleanPhone")).apply {
+                val smsIntent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$phoneDigits")).apply {
                     putExtra("sms_body", text)
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
                 activity.startActivity(smsIntent)
-                true to "فتحت لك تطبيق الرسائل لإرسالها إلى $cleanPhone."
+                true to "فتحت لك تطبيق الرسائل لإرسالها إلى $targetDisplayName."
             }
         } else {
-            val smsIntent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${if (cleanPhone.isNotBlank()) cleanPhone else ""}")).apply {
+            val smsIntent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${if (phoneDigits.isNotBlank()) phoneDigits else ""}")).apply {
                 putExtra("sms_body", text)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             try {
                 activity.startActivity(smsIntent)
-                true to "فتحت لك تطبيق الرسائل لإرسال: \"$text\"."
+                true to "فتحت لك تطبيق الرسائل لإرسال: \"$text\" إلى $targetDisplayName."
             } catch (_: Exception) {
                 false to "مش قادر أفتح تطبيق الرسائل."
             }
@@ -363,58 +428,48 @@ class AndroidHost(
 
     // --- التحكم الشامل في خصائص وإعدادات الجهاز ---
     fun controlDevice(action: String): Pair<Boolean, String> {
-        val act = action.lowercase().trim()
+        val act = Arabic.norm(action).lowercase().trim()
         return when {
-            act.contains("torch_on") || act.contains("flash_on") || act.contains("ولع") || act.contains("شغل الكشاف") || act.contains("نور") -> {
+            // كشاف / فلاش
+            act.contains("كشاف") || act.contains("فلاش") || act.contains("نور") -> {
                 val cam = activity.getSystemService(CameraManager::class.java)
                 try {
                     val id = cam?.cameraIdList?.firstOrNull {
                         cam.getCameraCharacteristics(it).get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
                     }
                     if (id != null) {
-                        cam.setTorchMode(id, true)
-                        isTorchOn = true
-                        true to "شغّلتلك الكشاف يا باشا."
+                        val turnOff = act.contains("طفي") || act.contains("اطفي") || act.contains("اقفل") || act.contains("off")
+                        cam.setTorchMode(id, !turnOff)
+                        isTorchOn = !turnOff
+                        if (!turnOff) true to "شغّلتلك الكشاف يا باشا." else true to "طفيت لك الكشاف."
                     } else false to "الكشاف غير مدعوم في الكاميرا."
                 } catch (e: Exception) {
-                    false to "تعذر تشغيل الكشاف: ${e.localizedMessage}"
+                    false to "تعذر التحكم في الكشاف: ${e.localizedMessage}"
                 }
             }
-            act.contains("torch_off") || act.contains("flash_off") || act.contains("اطفي") || act.contains("اطفي الكشاف") -> {
-                val cam = activity.getSystemService(CameraManager::class.java)
-                try {
-                    val id = cam?.cameraIdList?.firstOrNull {
-                        cam.getCameraCharacteristics(it).get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
-                    }
-                    if (id != null) {
-                        cam.setTorchMode(id, false)
-                        isTorchOn = false
-                        true to "طفيت لك الكشاف."
-                    } else false to "الكشاف غير مدعوم."
-                } catch (e: Exception) {
-                    false to "تعذر إطفاء الكشاف."
-                }
-            }
-            act.contains("volume_up") || act.contains("علي الصوت") || act.contains("ارفع الصوت") -> {
+            // تعلية وخفض وكتم الصوت
+            act.contains("علي الصوت") || act.contains("ارفع الصوت") || act.contains("زود الصوت") || act.contains("صوت عالي") || act.contains("volume_up") -> {
                 adjustVolume(up = true)
                 true to "عليت لك الصوت درجة."
             }
-            act.contains("volume_down") || act.contains("وطي الصوت") || act.contains("اخفض الصوت") -> {
+            act.contains("وطي الصوت") || act.contains("اخفض الصوت") || act.contains("نزل الصوت") || act.contains("صوت واطي") || act.contains("volume_down") -> {
                 adjustVolume(up = false)
                 true to "وطيت لك الصوت درجة."
             }
-            act.contains("mute") || act.contains("اكتم") -> {
+            act.contains("اكتم") || act.contains("صامت") || act.contains("ميوت") || act.contains("mute") -> {
                 val am = activity.getSystemService(Context.AUDIO_SERVICE) as AudioManager
                 am.setStreamVolume(AudioManager.STREAM_MUSIC, 0, AudioManager.FLAG_SHOW_UI)
                 true to "كتمت لك صوت الميديا تماماً."
             }
-            act.contains("battery") || act.contains("بطارية") || act.contains("شحن") -> {
+            // البطارية
+            act.contains("بطاريه") || act.contains("بطارية") || act.contains("شحن") || act.contains("battery") -> {
                 val bm = activity.getSystemService(BatteryManager::class.java)
                 val pct = bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
                 if (pct >= 0) true to "نسبة شحن البطارية دلوقتي $pct% يا باشا."
                 else false to "مش قادر أقرأ نسبة شحن البطارية."
             }
-            act.contains("wifi") || act.contains("واي فاي") -> {
+            // الواي فاي
+            act.contains("واي فاي") || act.contains("وايفاي") || act.contains("wifi") -> {
                 try {
                     activity.startActivity(Intent(Settings.ACTION_WIFI_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                     true to "فتحت لك إعدادات الواي فاي."
@@ -422,7 +477,8 @@ class AndroidHost(
                     false to "تعذر فتح إعدادات الواي فاي."
                 }
             }
-            act.contains("bluetooth") || act.contains("بلوتوث") -> {
+            // البلوتوث
+            act.contains("بلوتوث") || act.contains("bluetooth") -> {
                 try {
                     activity.startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                     true to "فتحت لك إعدادات البلوتوث."
@@ -430,7 +486,8 @@ class AndroidHost(
                     false to "تعذر فتح إعدادات البلوتوث."
                 }
             }
-            act.contains("home") || act.contains("الرئيسية") -> {
+            // الشاشة الرئيسية
+            act.contains("الرئيسيه") || act.contains("الرئيسية") || act.contains("الهوم") || act.contains("home") -> {
                 val ok = SearchClickService.instance?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME) ?: false
                 if (!ok) {
                     val i = Intent(Intent.ACTION_MAIN).apply {
@@ -441,15 +498,18 @@ class AndroidHost(
                 }
                 true to "رجعتك للشاشة الرئيسية."
             }
-            act.contains("recents") || act.contains("التطبيقات الأخيرة") -> {
+            // التطبيقات الأخيرة
+            act.contains("التطبيقات الاخيره") || act.contains("التطبيقات الأخيرة") || act.contains("البرامج المفتوحه") || act.contains("recents") -> {
                 val ok = SearchClickService.instance?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_RECENTS) ?: false
                 if (ok) true to "فتحت لك التطبيقات الأخيرة." else false to "محتاج تفعيل إمكانية الوصول للتحكم بالتطبيقات الأخيرة."
             }
-            act.contains("notifications") || act.contains("إشعارات") -> {
+            // الإشعارات
+            act.contains("اشعارات") || act.contains("إشعارات") || act.contains("الاشعارات") || act.contains("notifications") -> {
                 val ok = SearchClickService.instance?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS) ?: false
                 if (ok) true to "فتحت لك شريط الإشعارات." else false to "محتاج تفعيل إمكانية الوصول."
             }
-            act.contains("lock") || act.contains("اقفل الشاشة") -> {
+            // قفل الشاشة
+            act.contains("اقفل الشاشه") || act.contains("اقفل الشاشة") || act.contains("قفل الشاشه") || act.contains("اطفي الشاشه") || act.contains("lock") -> {
                 val ok = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     SearchClickService.instance?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN) ?: false
                 } else false
@@ -462,28 +522,47 @@ class AndroidHost(
     // --- فتح أي تطبيق مثبت على الجهاز ---
     fun openApp(appName: String): Pair<Boolean, String> {
         val norm = Arabic.norm(appName).lowercase().trim()
+            .replace(Regex("^(تطبيق|برنامج)\\s*"), "")
+            .trim()
         val pm = activity.packageManager
 
         val knownAppPackages = mapOf(
+            "واتس" to "com.whatsapp",
+            "الواتس" to "com.whatsapp",
             "واتساب" to "com.whatsapp",
             "whatsapp" to "com.whatsapp",
             "يوتيوب" to "com.google.android.youtube",
+            "اليوتيوب" to "com.google.android.youtube",
             "youtube" to "com.google.android.youtube",
+            "فيس" to "com.facebook.katana",
+            "الفيس" to "com.facebook.katana",
             "فيسبوك" to "com.facebook.katana",
+            "الفيسبوك" to "com.facebook.katana",
             "facebook" to "com.facebook.katana",
+            "انستا" to "com.instagram.android",
+            "الانستا" to "com.instagram.android",
             "انستجرام" to "com.instagram.android",
             "instagram" to "com.instagram.android",
             "تليجرام" to "org.telegram.messenger",
+            "التيليجرام" to "org.telegram.messenger",
             "telegram" to "org.telegram.messenger",
             "تيك توك" to "com.zhiliaoapp.musically",
+            "التيك توك" to "com.zhiliaoapp.musically",
             "tiktok" to "com.zhiliaoapp.musically",
             "كروم" to "com.android.chrome",
+            "الكروم" to "com.android.chrome",
+            "المتصفح" to "com.android.chrome",
             "chrome" to "com.android.chrome",
             "سبوتيفاي" to "com.spotify.music",
-            "spotify" to "com.spotify.music"
+            "spotify" to "com.spotify.music",
+            "ساوندكلاود" to "com.soundcloud.android",
+            "soundcloud" to "com.soundcloud.android",
+            "متجر" to "com.android.vending",
+            "المتجر" to "com.android.vending",
+            "جوجل بلاي" to "com.android.vending"
         )
 
-        val targetPkg = knownAppPackages.entries.firstOrNull { norm.contains(it.key) }?.value
+        val targetPkg = knownAppPackages.entries.firstOrNull { norm.contains(it.key) || it.key == norm }?.value
 
         if (targetPkg != null) {
             val intent = pm.getLaunchIntentForPackage(targetPkg)
@@ -534,7 +613,8 @@ class AndroidHost(
             val apps = pm.getInstalledApplications(PackageManager.GET_META_DATA)
             for (app in apps) {
                 val label = pm.getApplicationLabel(app).toString().lowercase()
-                if (label.contains(norm) || norm.contains(label)) {
+                val normLabel = Arabic.norm(label)
+                if (normLabel.contains(norm) || norm.contains(normLabel)) {
                     val intent = pm.getLaunchIntentForPackage(app.packageName)
                     if (intent != null) {
                         activity.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -549,16 +629,33 @@ class AndroidHost(
 
     // --- الاتصال برقم أو جهة اتصال ---
     fun makePhoneCall(recipient: String): Pair<Boolean, String> {
-        val clean = recipient.filter { it.isDigit() || it == '+' }
-        val uri = Uri.parse("tel:${if (clean.isNotBlank()) clean else recipient}")
-        val intent = Intent(Intent.ACTION_DIAL, uri).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        var clean = recipient.filter { it.isDigit() || it == '+' }
+        var displayName = recipient
+
+        // إذا كان المستلم اسماً وليس رقماً مجرداً، نبحث في جهات الاتصال
+        if (clean.isBlank() && recipient.isNotBlank()) {
+            val (foundName, foundNum) = findContactPhoneNumber(recipient)
+            if (!foundNum.isNullOrBlank()) {
+                clean = foundNum
+                displayName = foundName ?: recipient
+            }
         }
+
+        val dialTarget = if (clean.isNotBlank()) clean else recipient
+        val uri = Uri.parse("tel:$dialTarget")
+
+        val hasCallPermission = ContextCompat.checkSelfPermission(activity, android.Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED
+        val intent = if (hasCallPermission && clean.isNotBlank()) {
+            Intent(Intent.ACTION_CALL, uri).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+        } else {
+            Intent(Intent.ACTION_DIAL, uri).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+        }
+
         return try {
             activity.startActivity(intent)
-            true to "بتصل بـ $recipient يا باشا..."
+            true to "بتصل بـ $displayName ${if (clean.isNotBlank() && displayName != clean) "($clean)" else ""} يا باشا..."
         } catch (_: Exception) {
-            false to "تعذر إجراء المكالمة."
+            false to "تعذر إجراء المكالمة لـ $displayName."
         }
     }
 }
