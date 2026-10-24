@@ -10,6 +10,7 @@ import com.yamosaed.assistant.storage.TaskManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
 import java.net.URLEncoder
 
 class AssistantCoordinator(
@@ -28,6 +29,12 @@ class AssistantCoordinator(
         val trimmed = rawQuery.trim()
         if (trimmed.isBlank()) {
             onFeedback("قولي حاجة أقدر أساعدك فيها يا باشا.", null, ActionType.CHAT)
+            return@withContext
+        }
+
+        // المهام المركبة تمر عبر حلقة وكيل: يخطط، ينفذ إجراء واحداً، ثم يعيد قراءة الشاشة.
+        if (isMultiStepScreenTask(trimmed) && preferencesManager.geminiApiKey.isNotBlank()) {
+            runScreenAgentLoop(trimmed, recentHistory)
             return@withContext
         }
 
@@ -113,6 +120,60 @@ class AssistantCoordinator(
         handleLocalFallback(trimmed)
     }
 
+    private fun isMultiStepScreenTask(query: String): Boolean {
+        val n = Arabic.norm(query).lowercase()
+        val mentionsApp = n.contains("keep") || n.contains("كيب") || n.contains("واتساب") || n.contains("whatsapp") || n.contains("كروم") || n.contains("chrome")
+        val asksForAction = n.contains("اكتب") || n.contains("سجل") || n.contains("اعمل") || n.contains("انشئ") || n.contains("ابحث") || n.contains("اضغط") || n.contains("افتح")
+        val compound = n.contains(" وبعد") || n.contains(" واكتب") || n.contains(" وسجل") || n.contains(" ثم") || n.contains(" فيها") || n.contains("واعمل")
+        return mentionsApp && asksForAction && compound
+    }
+
+    private suspend fun runScreenAgentLoop(task: String, recentHistory: List<ChatMessage>) {
+        val apiKey = preferencesManager.geminiApiKey
+        var lastAction = "لم يبدأ التنفيذ بعد"
+        var consecutiveFailures = 0
+        for (step in 1..8) {
+            val screen = SearchClickService.visibleScreenText
+            val instruction = "أنت وكيل ينفذ مهمة حقيقية على هاتف أندرويد. المهمة الأصلية: $task\n" +
+                "الخطوة $step من 8. آخر نتيجة: $lastAction\n" +
+                "نص الشاشة الحالي: ${screen.take(3500).ifBlank { "لا يوجد نص شاشة متاح؛ لا تخمّن عناصر غير ظاهرة." }}\n" +
+                "اختر إجراء واحداً فقط: open_app باسم تطبيق محدد، أو screen_action بصيغة tap|النص أو type|النص أو scroll_down أو scroll_up أو back. " +
+                "لا تدّعِ اكتمال المهمة إلا إذا أثبت نص الشاشة ذلك. إذا فشل إجراء، اختر مساراً مختلفاً. عند تعذر المتابعة، أرجع chat واشرح العائق."
+            val result = try {
+                withContext(Dispatchers.IO) { geminiClient.decide(apiKey, instruction, preferencesManager.selectedGeminiModel, screen, recentHistory.takeLast(4)) }
+            } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
+            val decision = result?.getOrNull()
+            if (decision == null) {
+                onFeedback("وقفت المهمة لأن الاتصال بالذكاء الاصطناعي فشل. لا أقدر أؤكد تنفيذ الطلب.", "الوكيل", ActionType.SCREEN_ACTION)
+                return
+            }
+            when (decision.actionType) {
+                ActionType.OPEN_APP -> {
+                    val (ok, reply) = host.openApp(decision.query)
+                    lastAction = if (ok) "تم طلب فتح ${decision.query}" else "فشل فتح ${decision.query}: $reply"
+                    consecutiveFailures = if (ok) 0 else consecutiveFailures + 1
+                }
+                ActionType.SCREEN_ACTION -> {
+                    val ok = SearchClickService.instance?.performAgentAction(decision.query) == true
+                    lastAction = if (ok) "نجح الإجراء ${decision.query}" else "فشل الإجراء ${decision.query}؛ اختر إجراء مختلفاً"
+                    consecutiveFailures = if (ok) 0 else consecutiveFailures + 1
+                }
+                ActionType.CHAT, ActionType.QUESTION -> {
+                    val screenNow = SearchClickService.visibleScreenText
+                    val reply = if (screenNow.isBlank()) "وصلت لنقطة لا أستطيع التحقق منها لأن نص الشاشة غير متاح. آخر خطوة: $lastAction" else decision.reply.ifBlank { "انتهت محاولة التنفيذ؛ راجع الشاشة للتأكد من النتيجة." }
+                    onFeedback(reply, "الوكيل", ActionType.SCREEN_ACTION)
+                    return
+                }
+                else -> { lastAction = "الإجراء ${decision.actionType} خارج أدوات التحكم بالشاشة المتاحة"; consecutiveFailures++ }
+            }
+            if (consecutiveFailures >= 3) {
+                onFeedback("وقفت بعد 3 محاولات غير ناجحة. آخر حالة: $lastAction. لم أعتبر المهمة مكتملة.", "الوكيل", ActionType.SCREEN_ACTION)
+                return
+            }
+            delay(900)
+        }
+        onFeedback("وصلت للحد الآمن البالغ 8 خطوات. آخر نتيجة: $lastAction. راجع الشاشة؛ لم أؤكد اكتمال المهمة.", "الوكيل", ActionType.SCREEN_ACTION)
+    }
     private fun handleLocalFallback(query: String) {
         // التحقق أولاً: هل السؤال علمي أو معرفي أو دردشة عادية؟
         if (AssistantRouter.isKnowledgeQuestion(query) || AssistantRouter.isFollowUp(query)) {
