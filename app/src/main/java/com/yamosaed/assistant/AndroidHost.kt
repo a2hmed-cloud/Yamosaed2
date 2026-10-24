@@ -520,6 +520,23 @@ class AndroidHost(
     }
 
     // --- فتح أي تطبيق مثبت على الجهاز ---
+    /** Opens a Google Keep text-share draft. Android/Keep may still require the user to confirm saving. */
+    fun createKeepNote(noteText: String): Pair<Boolean, String> {
+        if (noteText.isBlank()) return false to "محتوى الملاحظة فاضي؛ قلّي أكتب إيه."
+        return try {
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_TEXT, noteText)
+                setPackage("com.google.android.keep")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            activity.startActivity(intent)
+            true to "فتحت مسودة الملاحظة في Google Keep. راجعها واضغط حفظ لو ظهر لك تأكيد؛ لسه ما أقدرش أضمن إنها اتحفظت من غير التحقق من الشاشة."
+        } catch (_: Exception) {
+            false to "مش قادر أفتح Google Keep. اتأكد إنه متثبت على الجهاز، وبعدها جرّب تاني."
+        }
+    }
+
     fun openApp(appName: String): Pair<Boolean, String> {
         val norm = Arabic.norm(appName).lowercase().trim()
             .replace(Regex("^(تطبيق|برنامج)\\s*"), "")
@@ -529,6 +546,13 @@ class AndroidHost(
         val knownAppPackages = mapOf(
             "واتس" to "com.whatsapp",
             "الواتس" to "com.whatsapp",
+            "google keep notes" to "com.google.android.keep",
+            "google keep" to "com.google.android.keep",
+            "keep notes" to "com.google.android.keep",
+            "جوجل كيب نوتس" to "com.google.android.keep",
+            "جوجل كيب" to "com.google.android.keep",
+            "كيب نوتس" to "com.google.android.keep",
+            "keep" to "com.google.android.keep",
             "واتساب" to "com.whatsapp",
             "whatsapp" to "com.whatsapp",
             "يوتيوب" to "com.google.android.youtube",
