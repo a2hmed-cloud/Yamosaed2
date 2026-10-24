@@ -67,6 +67,11 @@ class AssistantCoordinator(
                     onFeedback(reply, "تحكم بالجهاز", ActionType.DEVICE_CONTROL)
                     return@withContext
                 }
+                ActionType.CREATE_NOTE -> {
+                    val (ok, reply) = host.createKeepNote(localIntent.query)
+                    onFeedback(reply, localIntent.label, ActionType.CREATE_NOTE)
+                    return@withContext
+                }
                 ActionType.OPEN_APP -> {
                     val (ok, reply) = host.openApp(localIntent.query)
                     onFeedback(reply, "فتح تطبيق", ActionType.OPEN_APP)
@@ -287,6 +292,12 @@ class AssistantCoordinator(
                 val act = decision.query.ifBlank { originalQuery }
                 val (ok, reply) = host.controlDevice(act)
                 onFeedback(decision.reply.ifBlank { reply }, "تحكم بالجهاز", ActionType.DEVICE_CONTROL)
+            }
+
+            ActionType.CREATE_NOTE -> {
+                val noteText = decision.query.ifBlank { originalQuery }
+                val (ok, reply) = host.createKeepNote(noteText)
+                onFeedback(reply, "إنشاء ملاحظة", ActionType.CREATE_NOTE)
             }
 
             ActionType.OPEN_APP -> {
