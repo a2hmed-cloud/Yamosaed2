@@ -95,7 +95,7 @@ fun SettingsScreen(
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "المفتاح مجاني بالكامل من Google AI Studio ويتيح للمساعد الإجابة الذكية وسياق المحادثة. يُحفظ المفتاح مشفراً على جهازك فقط.",
+                    "يمكن إنشاء المفتاح من Google AI Studio. يُحفظ محليًا داخل مساحة التطبيق، لكن مفاتيح API المضمّنة في تطبيق Android ليست سرية بالكامل؛ لا تشارك المفتاح واستخدم قيود Google المتاحة.",
                     color = Color(0xFFBAC7E2),
                     fontSize = 12.sp,
                     lineHeight = 18.sp
