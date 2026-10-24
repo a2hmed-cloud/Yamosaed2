@@ -18,6 +18,8 @@ class SpeechManager(
     private var recognizer: SpeechRecognizer? = null
     var isListening: Boolean = false
         private set
+    var isContinuousWakeMode: Boolean = true
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
     fun isAvailable(): Boolean = SpeechRecognizer.isRecognitionAvailable(context)
 
@@ -51,6 +53,21 @@ class SpeechManager(
 
                 override fun onError(error: Int) {
                     isListening = false
+                    // في وضع الاستماع المستمر لكلمة (يا مساعد)، لا نزعج المستخدم بل نعيد الاستماع تلقائياً
+                    if (isContinuousWakeMode) {
+                        if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
+                            onError("صلاحية الميكروفون مطلوبة لسماع نداء: يا مساعد")
+                            return
+                        }
+                        val delay = if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY || error == SpeechRecognizer.ERROR_CLIENT) 1000L else 400L
+                        mainHandler.postDelayed({
+                            if (isContinuousWakeMode && !isListening) {
+                                startListening()
+                            }
+                        }, delay)
+                        return
+                    }
+
                     val errorMsg = when (error) {
                         SpeechRecognizer.ERROR_AUDIO -> "خطأ في تسجيل الصوت"
                         SpeechRecognizer.ERROR_CLIENT -> "خطأ في تطبيق التعرف الصوتي"
@@ -72,6 +89,12 @@ class SpeechManager(
                     val bestText = matches?.firstOrNull()?.trim().orEmpty()
                     if (bestText.isNotBlank()) {
                         onResult(bestText)
+                    } else if (isContinuousWakeMode) {
+                        mainHandler.postDelayed({
+                            if (isContinuousWakeMode && !isListening) {
+                                startListening()
+                            }
+                        }, 300L)
                     } else {
                         onError("ما وصلنيش كلام واضح، جرّب تاني.")
                     }

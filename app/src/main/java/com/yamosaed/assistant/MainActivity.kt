@@ -55,9 +55,9 @@ class MainActivity : ComponentActivity() {
 
     // UI state
     private var assistantState by mutableStateOf(AssistantState.IDLE)
-    private var statusText by mutableStateOf("جاهز يا باشا! دوس على العين أو اطلب أمر صوتي.")
+    private var statusText by mutableStateOf("في انتظار نداء: يا مساعد...")
     private var recognizedText by mutableStateOf("")
-    private var replyText by mutableStateOf("أهلاً بيك يا فندم! أنا يا مساعد، جاهز لأوامرك.")
+    private var replyText by mutableStateOf("أهلاً بك، أساعدك في إيه النهاردة؟")
     private var currentActionDetail by mutableStateOf<String?>(null)
     private val conversationHistory = mutableStateListOf<ChatMessage>()
     private var showHistoryDialog by mutableStateOf(false)
@@ -71,10 +71,10 @@ class MainActivity : ComponentActivity() {
     // Permission launcher
     private val requestAudioPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) {
-            startVoiceListening()
+            restartWakeStandby()
         } else {
             assistantState = AssistantState.ERROR
-            statusText = "محتاج إذن الميكروفون عشان أقدر أسمعك يا فندم."
+            statusText = "محتاج إذن الميكروفون عشان أقدر أسمعك لما تنادي يا مساعد."
         }
     }
 
@@ -150,7 +150,8 @@ class MainActivity : ComponentActivity() {
                 ttsManager.speak(reply) {
                     runOnUiThread {
                         assistantState = AssistantState.IDLE
-                        statusText = "جاهز لأمر جديد"
+                        statusText = "في انتظار نداء: يا مساعد..."
+                        restartWakeStandby()
                     }
                 }
             }
@@ -165,23 +166,37 @@ class MainActivity : ComponentActivity() {
         speechManager = SpeechManager(
             context = this,
             onReady = {
-                assistantState = AssistantState.LISTENING
-                statusText = "سامعك كويس... اتكلم دلوقتي"
+                if (speechManager.isContinuousWakeMode) {
+                    assistantState = AssistantState.IDLE
+                    statusText = "في انتظار نداء: يا مساعد..."
+                } else {
+                    assistantState = AssistantState.LISTENING
+                    statusText = "سامعك كويس... اتكلم دلوقتي"
+                }
             },
             onSpeechStart = {
-                assistantState = AssistantState.LISTENING
-                statusText = "بسمعك..."
+                if (!speechManager.isContinuousWakeMode) {
+                    assistantState = AssistantState.LISTENING
+                    statusText = "سامع صوتك..."
+                }
             },
             onSpeechEnd = {
-                assistantState = AssistantState.THINKING
-                statusText = "ثواني، بفهم طلبك..."
+                if (!speechManager.isContinuousWakeMode) {
+                    assistantState = AssistantState.THINKING
+                    statusText = "ثواني، بفهم طلبك..."
+                }
             },
             onResult = { query ->
                 handleUserQuery(query)
             },
             onError = { error ->
-                assistantState = AssistantState.ERROR
-                statusText = error
+                if (speechManager.isContinuousWakeMode) {
+                    assistantState = AssistantState.IDLE
+                    statusText = "في انتظار نداء: يا مساعد..."
+                } else {
+                    assistantState = AssistantState.ERROR
+                    statusText = error
+                }
             }
         )
 
@@ -332,16 +347,129 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            restartWakeStandby()
+        } else {
+            requestAudioPermission.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    override fun onStop() {
+        cancelCurrentOperation()
+        super.onStop()
+    }
+
+    private fun restartWakeStandby() {
+        if (isDestroyed || isFinishing) return
+        speechManager.stopListening()
+        speechManager.isContinuousWakeMode = true
+        assistantState = AssistantState.IDLE
+        statusText = "في انتظار نداء: يا مساعد..."
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            speechManager.startListening()
+        }
+    }
+
     private fun startVoiceListening() {
         ttsManager.stop()
+        speechManager.isContinuousWakeMode = false
         assistantState = AssistantState.LISTENING
-        statusText = "بجهز الميكروفون..."
+        statusText = "بجهز الميكروفون... اتكلم دلوقتي"
         speechManager.startListening()
+    }
+
+    private fun extractWakeWordAndCommand(text: String): Pair<Boolean, String> {
+        val trimmed = text.trim()
+        val normalized = trimmed
+            .replace('أ', 'ا')
+            .replace('إ', 'ا')
+            .replace('آ', 'ا')
+            .replace('ة', 'ه')
+            .replace('ى', 'ي')
+
+        val prefixRegex = Regex("^(يا\\s*مساعد|يا\\s*مسعد|مساعد|يا\\s*عم\\s*مساعد)[\\s,:]*", RegexOption.IGNORE_CASE)
+        val prefixMatch = prefixRegex.find(trimmed)
+        if (prefixMatch != null) {
+            val command = trimmed.substring(prefixMatch.range.last + 1).trim()
+            return Pair(true, command)
+        }
+
+        val containsWake = normalized.contains("يا مساعد") ||
+                normalized.contains("يامساعد") ||
+                normalized.contains("يا مسعد") ||
+                normalized.contains("يامسعد")
+        if (containsWake) {
+            val command = trimmed
+                .replace(Regex("(يا\\s*مساعد|يا\\s*مسعد|يامساعد|يامسعد)", RegexOption.IGNORE_CASE), "")
+                .trim()
+            return Pair(true, command)
+        }
+
+        return Pair(false, trimmed)
     }
 
     private fun handleUserQuery(query: String) {
         val trimmed = query.trim()
-        if (trimmed.isBlank()) return
+        if (trimmed.isBlank()) {
+            if (speechManager.isContinuousWakeMode) {
+                speechManager.startListening()
+            }
+            return
+        }
+
+        val (hasWakeWord, command) = extractWakeWordAndCommand(trimmed)
+
+        // وضع انتظار كلمة التنبيه (يا مساعد) الصامت
+        if (speechManager.isContinuousWakeMode) {
+            if (!hasWakeWord) {
+                // كلام عابر لا يحتوي نداء "يا مساعد" - البقاء صامتاً ومواصلة الانتظار
+                speechManager.startListening()
+                return
+            }
+
+            // تم سماع "يا مساعد"!
+            speechManager.stopListening()
+            speechManager.isContinuousWakeMode = false
+
+            if (command.isBlank()) {
+                // نادى "يا مساعد" فقط بدون أمر:
+                // يشتغل على الفور ويقول: "أهلاً بك، أساعدك في إيه النهاردة؟" ثم يستمع للأمر
+                assistantState = AssistantState.SPEAKING
+                val greeting = "أهلاً بك، أساعدك في إيه النهاردة؟"
+                replyText = greeting
+                statusText = "أهلاً بك!"
+                conversationHistory.add(ChatMessage(text = trimmed, isUser = true))
+                conversationHistory.add(ChatMessage(text = greeting, isUser = false))
+
+                ttsManager.speak(greeting) {
+                    runOnUiThread {
+                        assistantState = AssistantState.LISTENING
+                        statusText = "سامعك كويس... اطلب أي حاجة"
+                        speechManager.isContinuousWakeMode = false
+                        speechManager.startListening()
+                    }
+                }
+                return
+            } else {
+                // نادى "يا مساعد" مع الأمر في نفس الجملة
+                processCommand(command)
+                return
+            }
+        }
+
+        // إدخال أمر مباشر (بعد الترحيب أو بالضغط على المايك أو كتابة نص)
+        val finalCommand = if (hasWakeWord && command.isNotBlank()) command else trimmed
+        processCommand(finalCommand)
+    }
+
+    private fun processCommand(command: String) {
+        val trimmed = command.trim()
+        if (trimmed.isBlank()) {
+            restartWakeStandby()
+            return
+        }
 
         // منع إرسال طلبين في جزء من الثانية (Debounce)
         val now = System.currentTimeMillis()
@@ -370,13 +498,17 @@ class MainActivity : ComponentActivity() {
                 replyText = timeoutMsg
                 statusText = "انتهى الوقت المحدد للرد"
                 conversationHistory.add(ChatMessage(text = timeoutMsg, isUser = false))
-                ttsManager.speak(timeoutMsg)
+                ttsManager.speak(timeoutMsg) {
+                    runOnUiThread { restartWakeStandby() }
+                }
             } catch (_: CancellationException) {
                 assistantState = AssistantState.IDLE
                 statusText = "تم إلغاء الطلب"
+                restartWakeStandby()
             } catch (e: Exception) {
                 assistantState = AssistantState.ERROR
                 statusText = e.localizedMessage ?: "حدث خطأ أثناء معالجة الطلب"
+                restartWakeStandby()
             }
         }
     }
@@ -389,7 +521,7 @@ class MainActivity : ComponentActivity() {
         SearchClickService.instance?.disarm()
         if (assistantState != AssistantState.IDLE) {
             assistantState = AssistantState.IDLE
-            statusText = "جاهز يا باشا"
+            statusText = "في انتظار نداء: يا مساعد..."
         }
     }
 

@@ -14,6 +14,11 @@ enum class ActionType {
     TASK_CLEAR,    // مسح المهام
     MAPS,          // الأماكن والخرائط
     CLARIFY,       // طلب توضيح عند الغموض التام
+    LOCAL_MUSIC,   // تشغيل أغاني من على الجهاز نفسه
+    SEND_MESSAGE,  // إرسال رسائل SMS أو WhatsApp
+    PHONE_CALL,    // الاتصال برقم أو شخص
+    DEVICE_CONTROL,// التحكم في الجهاز (كشاف، صوت، بطارية، واي فاي، هوم)
+    OPEN_APP,      // فتح أي تطبيق على الجهاز
     OPEN_SETTINGS, // فتح شاشة الإعدادات
     OPEN_TASKS,    // فتح شاشة المهام
     CLOSE_OVERLAYS // العودة لشاشة العين
@@ -25,6 +30,11 @@ object AssistantRouter {
         "question", "qa", "explain" -> ActionType.QUESTION
         "search_music", "music_search", "music_play" -> ActionType.MUSIC_SEARCH
         "music_control", "media_control" -> ActionType.MUSIC_CONTROL
+        "local_music", "device_music", "play_local" -> ActionType.LOCAL_MUSIC
+        "send_message", "message", "sms", "whatsapp" -> ActionType.SEND_MESSAGE
+        "phone_call", "call", "dial" -> ActionType.PHONE_CALL
+        "device_control", "torch", "flashlight", "volume", "wifi", "battery" -> ActionType.DEVICE_CONTROL
+        "open_app", "launch_app", "app" -> ActionType.OPEN_APP
         "weather" -> ActionType.WEATHER
         "alarm" -> ActionType.ALARM
         "timer" -> ActionType.TIMER

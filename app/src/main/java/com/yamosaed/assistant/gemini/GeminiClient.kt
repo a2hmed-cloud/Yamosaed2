@@ -33,24 +33,30 @@ class GeminiClient {
 2. المحادثة والمتابعة وسياق الحديث (CHAT & FOLLOW_UP):
    - افهم الأسئلة التتابعية المعتمدة على ما سبق في المحادثة مثل: "ليه؟"، "طب وضح أكتر"، "اديني مثال"، "كمل"، "كرر ده"، "شغلها".
    - تجاوب مع الدردشة العادية ("عامل إيه يا مساعد"، "يومك عامل إزاي") بروح إيجابية ومرحة.
-3. استدعاء أدوات الأندرويد بدقة:
-   - search_music: عند طلب تشغيل أو سماع أغنية أو فنان أو مزيكا (مثال: "شغل عمرو دياب"، "اسمع تامر حسني").
+3. استدعاء أدوات الأندرويد والتحكم الكامل في الجهاز بدقة:
+   - send_message: لإرسال رسائل SMS أو واتساب (مثال: "ابعت رسالة لأحمد هتاخر"، "ابعت واتساب لماما"). ضع نص الرسالة في query واسم أو رقم المستلم في recipient، و app = "sms" أو "whatsapp".
+   - local_music: عند طلب تشغيل أغنية من على الجهاز نفسه أو الموبايل (مثال: "شغل من على الجهاز أغنية...", "شغل تراك... من ملفات الموبايل"). ضع اسم الأغنية في query.
+   - search_music: عند طلب تشغيل أغنية من Spotify أو ساوندكلاود.
    - music_control: للتحكم (toggle, next, previous).
-   - weather: عند السؤال عن حالة الجو أو الطقس أو الحرارة.
+   - device_control: للتحكم في الهاتف (الكشاف/الفلاش torch_on/torch_off، تعلية/توطية الصوت volume_up/volume_down/mute، فتح الواي فاي wifi، البلوتوث bluetooth، نسبة البطارية battery، العودة للرئيسية home، التطبيقات الأخيرة recents، قفل الشاشة lock). ضع اسم الإجراء في query.
+   - open_app: لفتح أي تطبيق على الموبايل (واتساب، يوتيوب، كاميرا، حاسبة، فيسبوك، تليجرام، استوديو/معرض، تيك توك، إعدادات، وغيرها). ضع اسم التطبيق في query.
+   - phone_call: للاتصال برقم أو شخص (مثال: "اتصل بأحمد"، "اتصل على 010..."). ضع الرقم أو الاسم في recipient.
+   - weather: عند السؤال عن حالة الجو أو الطقس.
    - alarm: لضبط منبه مع تحديد الساعة والدقيقة (0-23 و 0-59).
    - timer: لضبط مؤقت بالثواني.
    - task_add / task_list / task_clear: لإدارة مهام وتذكيرات اليوم.
-   - maps: للبحث عن أماكن قريبة (صيدلية، مطعم، بنك).
-   - web_search: فقط عندما يطلب المستخدم صراحة البحث في الويب أو عن أحدث الأخبار ("ابحث في جوجل عن...", "دور على أخبار التكنولوجيا").
-   - clarify: فقط عندما يكون الطلب غامضاً جداً ولا يمكن تخمين مقصده، اسأل سؤالاً توضيحياً قصيراً.
+   - maps: للبحث عن أماكن قريبة.
+   - web_search: فقط عندما يطلب المستخدم صراحة البحث في الويب.
+   - clarify: فقط عندما يكون الطلب غامضاً جداً.
 
 تنسيق الإخراج الإلزامي:
 أرجع كائن JSON صالح فقط دون كتل Markdown ودون أي نص خارجي:
 {
-  "action": "question" | "chat" | "search_music" | "music_control" | "weather" | "alarm" | "timer" | "task_add" | "task_list" | "task_clear" | "maps" | "web_search" | "clarify",
+  "action": "question" | "chat" | "send_message" | "local_music" | "device_control" | "open_app" | "phone_call" | "search_music" | "music_control" | "weather" | "alarm" | "timer" | "task_add" | "task_list" | "task_clear" | "maps" | "web_search" | "clarify",
   "reply": "الرد الكامل والمفيد والممتع الموجه للمستخدم بالعربية المصرية",
-  "query": "كلمات البحث أو نص المهمة أو المدينة أو التحكم عند الحاجة",
-  "app": "spotify" | "soundcloud",
+  "query": "كلمات البحث أو نص الرسالة أو الإجراء المطلوب",
+  "recipient": "اسم أو رقم المستلم إن وجد",
+  "app": "spotify" | "sms" | "whatsapp",
   "hour": -1,
   "minute": -1,
   "seconds": 0,
@@ -231,7 +237,8 @@ class GeminiClient {
                 minute = json.optInt("minute", -1),
                 seconds = json.optLong("seconds", 0L),
                 app = json.optString("app", "spotify"),
-                label = json.optString("label", "")
+                label = json.optString("label", ""),
+                recipient = json.optString("recipient", "")
             )
             return Result.success(decision)
 

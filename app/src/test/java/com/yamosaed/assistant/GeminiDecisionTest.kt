@@ -163,4 +163,36 @@ class GeminiDecisionTest {
         assertFalse(tokens.contains("شغل"))
         assertFalse(tokens.contains("سبوتيفاي"))
     }
+
+    @Test
+    fun testDeviceControlActionsParsing() {
+        assertEquals(ActionType.DEVICE_CONTROL, AssistantRouter.parseActionType("device_control"))
+        assertEquals(ActionType.LOCAL_MUSIC, AssistantRouter.parseActionType("local_music"))
+        assertEquals(ActionType.SEND_MESSAGE, AssistantRouter.parseActionType("send_message"))
+        assertEquals(ActionType.OPEN_APP, AssistantRouter.parseActionType("open_app"))
+        assertEquals(ActionType.PHONE_CALL, AssistantRouter.parseActionType("phone_call"))
+    }
+
+    @Test
+    fun testWakeWordPrefixExtraction() {
+        val regex = Regex("^(يا\\s*مساعد|يا\\s*مسعد|مساعد|يا\\s*عم\\s*مساعد)[\\s,:]*", RegexOption.IGNORE_CASE)
+
+        val wakeOnly = "يا مساعد"
+        val m1 = regex.find(wakeOnly)
+        assertTrue(m1 != null)
+        val cmd1 = wakeOnly.substring(m1!!.range.last + 1).trim()
+        assertEquals("", cmd1)
+
+        val wakeWithCommand = "يا مساعد شغل الكشاف"
+        val m2 = regex.find(wakeWithCommand)
+        assertTrue(m2 != null)
+        val cmd2 = wakeWithCommand.substring(m2!!.range.last + 1).trim()
+        assertEquals("شغل الكشاف", cmd2)
+
+        val wakeMessage = "يا مساعد ابعت رسالة لأحمد"
+        val m3 = regex.find(wakeMessage)
+        assertTrue(m3 != null)
+        val cmd3 = wakeMessage.substring(m3!!.range.last + 1).trim()
+        assertEquals("ابعت رسالة لأحمد", cmd3)
+    }
 }

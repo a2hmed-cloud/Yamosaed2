@@ -85,6 +85,45 @@ class AssistantCoordinator(
             return
         }
 
+        val norm = Arabic.norm(query).lowercase().trim()
+
+        // 1. التحكم بالجهاز محلياً (الكشاف، الصوت، البطارية، الواي فاي)
+        if (norm.contains("كشاف") || norm.contains("فلاش") || norm.contains("الصوت") ||
+            norm.contains("بطاريه") || norm.contains("شحن") || norm.contains("واي فاي") ||
+            norm.contains("بلوتوث") || norm.contains("الرئيسيه") || norm.contains("الشاشه")
+        ) {
+            val (ok, reply) = host.controlDevice(norm)
+            onFeedback(reply, "تحكم بالجهاز", ActionType.DEVICE_CONTROL)
+            return
+        }
+
+        // 2. تشغيل الأغاني من على الجهاز نفسه محلياً
+        if (norm.contains("من الجهاز") || norm.contains("من الموبايل") || norm.contains("ملفات الجهاز")) {
+            val songName = norm.replace("شغل", "").replace("من الجهاز", "").replace("من الموبايل", "")
+                .replace("ملفات الجهاز", "").replace("اغنية", "").replace("تراك", "").trim()
+            val (ok, reply) = host.playLocalSong(songName)
+            onFeedback(reply, "مشغل الجهاز", ActionType.LOCAL_MUSIC)
+            return
+        }
+
+        // 3. فتح التطبيقات محلياً
+        if (norm.startsWith("افتح ") && !norm.contains("مهامي") && !norm.contains("اعدادات")) {
+            val appName = norm.removePrefix("افتح").trim()
+            val (ok, reply) = host.openApp(appName)
+            if (ok) {
+                onFeedback(reply, "فتح تطبيق", ActionType.OPEN_APP)
+                return
+            }
+        }
+
+        // 4. الاتصال برقم محلياً
+        if (norm.startsWith("اتصل ب") || norm.startsWith("رن على")) {
+            val person = norm.removePrefix("اتصل ب").removePrefix("رن على").trim()
+            val (ok, reply) = host.makePhoneCall(person)
+            onFeedback(reply, "اتصال هاتفي", ActionType.PHONE_CALL)
+            return
+        }
+
         // لو كان أمراً محلياً مدعوماً (منبه، مؤقت، طقس، مهام، وقت)
         val localReply = localAgent.handle(query)
         val actionType = when {
@@ -236,6 +275,38 @@ class AssistantCoordinator(
             ActionType.CLARIFY -> {
                 val reply = decision.reply.ifBlank { "مش متأكد من قصدك يا باشا، تحب أساعدك في إيه بالظبط؟" }
                 onFeedback(reply, "توضيح", ActionType.CLARIFY)
+            }
+
+            ActionType.LOCAL_MUSIC -> {
+                val songQuery = decision.query.ifBlank { originalQuery }
+                val (ok, reply) = host.playLocalSong(songQuery)
+                onFeedback(decision.reply.ifBlank { reply }, "مشغل الجهاز", ActionType.LOCAL_MUSIC)
+            }
+
+            ActionType.SEND_MESSAGE -> {
+                val recipient = decision.recipient.ifBlank { "جهة الاتصال" }
+                val msg = decision.query.ifBlank { originalQuery }
+                val app = if (decision.app.isNotBlank()) decision.app else "sms"
+                val (ok, reply) = host.sendMessage(recipient, msg, app)
+                onFeedback(decision.reply.ifBlank { reply }, "إرسال رسالة", ActionType.SEND_MESSAGE)
+            }
+
+            ActionType.DEVICE_CONTROL -> {
+                val act = decision.query.ifBlank { originalQuery }
+                val (ok, reply) = host.controlDevice(act)
+                onFeedback(decision.reply.ifBlank { reply }, "تحكم بالجهاز", ActionType.DEVICE_CONTROL)
+            }
+
+            ActionType.OPEN_APP -> {
+                val app = decision.query.ifBlank { originalQuery }
+                val (ok, reply) = host.openApp(app)
+                onFeedback(decision.reply.ifBlank { reply }, "فتح تطبيق", ActionType.OPEN_APP)
+            }
+
+            ActionType.PHONE_CALL -> {
+                val recipient = decision.recipient.ifBlank { decision.query.ifBlank { originalQuery } }
+                val (ok, reply) = host.makePhoneCall(recipient)
+                onFeedback(decision.reply.ifBlank { reply }, "اتصال هاتفي", ActionType.PHONE_CALL)
             }
 
             ActionType.OPEN_TASKS -> {

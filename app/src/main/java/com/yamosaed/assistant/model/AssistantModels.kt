@@ -38,5 +38,7 @@ data class GeminiDecision(
     val minute: Int = -1,
     val seconds: Long = 0L,
     val app: String = "spotify",
-    val label: String = ""
+    val label: String = "",
+    val recipient: String = "",
+    val extra: String = ""
 )
