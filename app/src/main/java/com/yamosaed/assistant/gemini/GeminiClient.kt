@@ -10,6 +10,12 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
+internal fun geminiGenerateContentUrl(model: String): String {
+    val modelId = model.trim().removePrefix("models/")
+    require(modelId.isNotBlank()) { "معرّف النموذج فارغ" }
+    return "https://generativelanguage.googleapis.com/v1beta/models/$modelId:generateContent"
+}
+
 class GeminiClient {
 
     companion object {
@@ -106,8 +112,7 @@ class GeminiClient {
     ): Result<GeminiDecision> {
         var conn: HttpURLConnection? = null
         try {
-            val modelId = model.trim().removePrefix("models/")
-            val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$modelId:generateContent"
+            val endpoint = geminiGenerateContentUrl(model)
             val url = URL(endpoint)
             conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
@@ -262,8 +267,7 @@ class GeminiClient {
         }
         var conn: HttpURLConnection? = null
         try {
-            val modelId = model.trim().removePrefix("models/")
-            val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$modelId:generateContent"
+            val endpoint = geminiGenerateContentUrl(model)
             val url = URL(endpoint)
             conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
