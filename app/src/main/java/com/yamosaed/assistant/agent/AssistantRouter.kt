@@ -45,6 +45,7 @@ object AssistantRouter {
         "phone_call", "call", "dial" -> ActionType.PHONE_CALL
         "device_control", "torch", "flashlight", "volume", "wifi", "battery" -> ActionType.DEVICE_CONTROL
         "open_app", "launch_app", "app" -> ActionType.OPEN_APP
+        "create_note", "note_create", "keep_note" -> ActionType.CREATE_NOTE
         "weather" -> ActionType.WEATHER
         "alarm" -> ActionType.ALARM
         "timer" -> ActionType.TIMER
