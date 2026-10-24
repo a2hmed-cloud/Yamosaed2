@@ -51,7 +51,7 @@ object ActionPlanParser {
         ("WebSearchTool" to "search") to Rule(ActionRisk.LOW)
     )
 
-    fun parse(json: String): PlanParseResult = try {
+    fun parse(json: String): PlanParseResult {\n        return try {
         val root = JSONObject(json)
         val intent = root.optString("intent").trim()
         val goal = root.optString("goal").trim()
