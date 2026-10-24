@@ -62,11 +62,5 @@ class PreferencesManager(context: Context) {
         private const val KEY_BG_WAKE = "background_wake_enabled"
         private const val KEY_SPEECH_RATE = "speech_rate"
 
-        val AVAILABLE_MODELS = listOf(
-            "gemini-1.5-flash" to "Gemini 1.5 Flash (الأكثر استقراراً وتوافقاً مع كل المفاتيح)",
-            "gemini-2.0-flash" to "Gemini 2.0 Flash (الجيل الجديد فائق السرعة)",
-            "gemini-2.5-flash" to "Gemini 2.5 Flash (النموذج الأحدث)",
-            "gemini-1.5-pro" to "Gemini 1.5 Pro (الأعلى دقة وتفصيلاً)"
-        )
     }
 }
