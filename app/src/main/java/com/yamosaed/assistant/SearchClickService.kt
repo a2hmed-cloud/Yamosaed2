@@ -90,13 +90,11 @@ class SearchClickService : AccessibilityService() {
         if (event == null) return
         val packageName = event.packageName?.toString() ?: return
 
-        // دعم Spotify و SoundCloud
-        if (packageName != "com.spotify.music" && packageName != "com.soundcloud.android") return
-
+        // قراءة النص الظاهر من أي تطبيق؛ البحث التلقائي عن الأغاني يظل محصوراً في تطبيقات الموسيقى.
         val root = rootInActiveWindow ?: return
-        val currentScreenText = normalizeText(subtreeText(root))
-        visibleScreenText = currentScreenText.take(3000)
+        visibleScreenText = normalizeText(subtreeText(root)).take(5000)
 
+        if (packageName != "com.spotify.music" && packageName != "com.soundcloud.android") return
         if (queryTokens.isEmpty() || hasClicked) return
         if (packageName != targetPackage) return
 
@@ -150,6 +148,85 @@ class SearchClickService : AccessibilityService() {
             val success = clickTarget.performAction(AccessibilityNodeInfo.ACTION_CLICK)
             finish(success)
         }
+    }
+
+    /**
+     * تنفيذ إجراء واحد واضح على الواجهة الحالية.
+     * الصيغ: tap|نص، type|نص، scroll_down، scroll_up، back، home، recents، notifications.
+     */
+    fun performAgentAction(command: String): Boolean {
+        val parts = command.split("|", limit = 2)
+        val action = parts[0].trim().lowercase()
+        val value = parts.getOrNull(1)?.trim().orEmpty()
+        val root = rootInActiveWindow
+
+        return when (action) {
+            "back" -> performGlobalAction(GLOBAL_ACTION_BACK)
+            "home" -> performGlobalAction(GLOBAL_ACTION_HOME)
+            "recents" -> performGlobalAction(GLOBAL_ACTION_RECENTS)
+            "notifications" -> performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)
+            "scroll_down" -> root?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD) == true
+            "scroll_up" -> root?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD) == true
+            "tap" -> {
+                if (value.isBlank() || root == null) false
+                else findAgentTarget(root, value)?.let { target ->
+                    (findClickableTarget(target) ?: target).performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                } ?: false
+            }
+            "type" -> {
+                if (value.isBlank() || root == null) false
+                else {
+                    val input = findFocusedEditable(root) ?: findFirstEditable(root)
+                    input?.performAction(
+                        AccessibilityNodeInfo.ACTION_SET_TEXT,
+                        android.os.Bundle().apply {
+                            putCharSequence(
+                                AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                                value
+                            )
+                        }
+                    ) == true
+                }
+            }
+            else -> false
+        }
+    }
+
+    private fun findAgentTarget(root: AccessibilityNodeInfo, label: String): AccessibilityNodeInfo? {
+        val wanted = normalizeText(label)
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        while (queue.isNotEmpty()) {
+            val node = queue.removeFirst()
+            val text = normalizeText(
+                listOfNotNull(node.text?.toString(), node.contentDescription?.toString()).joinToString(" ")
+            )
+            if (text == wanted || (wanted.length >= 3 && text.contains(wanted))) return node
+            for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
+        }
+        return null
+    }
+
+    private fun findFocusedEditable(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        while (queue.isNotEmpty()) {
+            val node = queue.removeFirst()
+            if (node.isEditable && node.isFocused) return node
+            for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
+        }
+        return null
+    }
+
+    private fun findFirstEditable(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        while (queue.isNotEmpty()) {
+            val node = queue.removeFirst()
+            if (node.isEditable) return node
+            for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
+        }
+        return null
     }
 
     private fun findSearchInput(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {

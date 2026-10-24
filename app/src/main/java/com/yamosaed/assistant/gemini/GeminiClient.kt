@@ -46,6 +46,7 @@ class GeminiClient {
    - music_control: للتحكم (toggle, next, previous).
    - device_control: للتحكم في الهاتف (الكشاف/الفلاش torch_on/torch_off، تعلية/توطية الصوت volume_up/volume_down/mute، فتح الواي فاي wifi، البلوتوث bluetooth، نسبة البطارية battery، العودة للرئيسية home، التطبيقات الأخيرة recents، قفل الشاشة lock). ضع اسم الإجراء في query.
    - open_app: لفتح أي تطبيق على الموبايل (واتساب، يوتيوب، كاميرا، حاسبة، فيسبوك، تليجرام، استوديو/معرض، تيك توك، إعدادات، وغيرها). ضع اسم التطبيق في query.
+   - screen_action: لتنفيذ إجراء واحد فقط على الشاشة الحالية بعد قراءة النص الظاهر المرفق بالسياق. ضع في query واحدة من الصيغ التالية حرفياً: tap|اسم الزر أو العنصر، type|النص المراد كتابته، scroll_down، scroll_up، back، home، recents، notifications. لا تدّعِ رؤية نص غير موجود في سياق الشاشة، ولا تستخدم هذا الإجراء لإرسال أو حذف أو شراء أو مشاركة شيء دون تأكيد المستخدم أولاً.
    - phone_call: للاتصال برقم أو شخص (مثال: "اتصل بأحمد"، "اتصل على 010..."). ضع الرقم أو الاسم في recipient.
    - weather: عند السؤال عن حالة الجو أو الطقس.
    - alarm: لضبط منبه مع تحديد الساعة والدقيقة (0-23 و 0-59).
@@ -58,7 +59,7 @@ class GeminiClient {
 تنسيق الإخراج الإلزامي:
 أرجع كائن JSON صالح فقط دون كتل Markdown ودون أي نص خارجي:
 {
-  "action": "question" | "chat" | "send_message" | "local_music" | "device_control" | "open_app" | "phone_call" | "search_music" | "music_control" | "weather" | "alarm" | "timer" | "task_add" | "task_list" | "task_clear" | "maps" | "web_search" | "clarify",
+  "action": "question" | "chat" | "screen_action" | "send_message" | "local_music" | "device_control" | "open_app" | "phone_call" | "search_music" | "music_control" | "weather" | "alarm" | "timer" | "task_add" | "task_list" | "task_clear" | "maps" | "web_search" | "clarify",
   "reply": "الرد الكامل والمفيد والممتع الموجه للمستخدم بالعربية المصرية",
   "query": "كلمات البحث أو نص الرسالة أو الإجراء المطلوب",
   "recipient": "اسم أو رقم المستلم إن وجد",
@@ -146,7 +147,7 @@ class GeminiClient {
             // Current prompt with optional screen context
             val promptBuilder = StringBuilder(userQuery)
             if (screenContext.isNotBlank()) {
-                promptBuilder.append("\n\n[معلومات استرشادية من شاشة الموسيقى: ${screenContext.take(1500)}]")
+                promptBuilder.append("\n\n[نص الواجهة الحالية المستخرج من خدمة إمكانية الوصول: ${screenContext.take(3000)}]")
             }
 
             contentsArray.put(

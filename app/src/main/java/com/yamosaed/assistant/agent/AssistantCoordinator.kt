@@ -315,6 +315,17 @@ class AssistantCoordinator(
                 val reply = decision.reply.ifBlank { "تمام يا فندم، رجعت لشاشة المساعد." }
                 onFeedback(reply, "الرئيسية", ActionType.CLOSE_OVERLAYS)
             }
+
+            ActionType.SCREEN_ACTION -> {
+                val command = decision.query.ifBlank { originalQuery }
+                val success = SearchClickService.instance?.performAgentAction(command) == true
+                val reply = if (success) {
+                    decision.reply.ifBlank { "نفذت الإجراء على الشاشة الحالية." }
+                } else {
+                    "مش قادر أنفذ الإجراء ده على الشاشة الحالية. اتأكد إن خدمة إمكانية الوصول مفعّلة، وإن العنصر ظاهر وقابل للتحكم."
+                }
+                onFeedback(reply, "تحكم بالشاشة", ActionType.SCREEN_ACTION)
+            }
         }
     }
 }

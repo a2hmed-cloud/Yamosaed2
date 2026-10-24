@@ -21,7 +21,8 @@ enum class ActionType {
     OPEN_APP,      // فتح أي تطبيق على الجهاز
     OPEN_SETTINGS, // فتح شاشة الإعدادات
     OPEN_TASKS,    // فتح شاشة المهام
-    CLOSE_OVERLAYS // العودة لشاشة العين
+    CLOSE_OVERLAYS, // العودة لشاشة العين
+    SCREEN_ACTION // تنفيذ إجراء واجهة واحد عبر خدمة إمكانية الوصول
 }
 
 data class LocalIntent(
@@ -54,6 +55,7 @@ object AssistantRouter {
         "open_settings", "settings" -> ActionType.OPEN_SETTINGS
         "open_tasks", "tasks" -> ActionType.OPEN_TASKS
         "close", "back" -> ActionType.CLOSE_OVERLAYS
+        "screen_action", "ui_action" -> ActionType.SCREEN_ACTION
         "clarify" -> ActionType.CLARIFY
         else -> ActionType.CHAT
     }
