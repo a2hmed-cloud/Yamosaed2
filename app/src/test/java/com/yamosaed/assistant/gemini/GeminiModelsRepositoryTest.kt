@@ -27,6 +27,17 @@ class GeminiModelsRepositoryTest {
         } catch (_: Exception) { }
     }
 
+    @Test fun selectedModelIsUsedInGenerationUrlWithoutDuplicatePrefix() {
+        assertEquals(
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-test:generateContent",
+            geminiGenerateContentUrl("models/gemini-test")
+        )
+        assertEquals(
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-test:generateContent",
+            geminiGenerateContentUrl("gemini-test")
+        )
+    }
+
     @Test fun stripsModelsPrefixOnce() {
         val models = GeminiModelsRepository.parseModels("""{"models":[{"name":"models/models/gemini-x","supportedGenerationMethods":["generateContent"]}]}""")
         assertEquals("models/gemini-x", models.single().id)
