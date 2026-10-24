@@ -288,22 +288,94 @@ class GeminiClient {
             conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
             val code = conn.responseCode
             if (code in 200..299) {
-                return@withContext Result.success("متصل بنجاح مع $model")
+                Result.success("متصل بنجاح مع $model")
+            } else {
+                val errStream = conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+                val msg = try {
+                    val errObj = JSONObject(errStream).optJSONObject("error")
+                    val message = errObj?.optString("message") ?: ""
+                    when {
+                        code == 400 && message.contains("API key not valid", ignoreCase = true) -> "المفتاح غير صالح أو مكتوب خطأ"
+                        code == 404 -> "النموذج $model غير متاح لهذا المفتاح، جرب اختيار نموذج آخر"
+                        code == 429 -> "تجاوزت حد الاستخدام المجاني، انتظر دقيقة وجرب تاني"
+                        else -> "كود الخطأ: $code"
+                    }
+                } catch (_: Exception) { "كود الخطأ: $code" }
+                Result.failure(Exception(msg))
             }
-            val errStream = conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
-            val msg = try {
-                val errObj = JSONObject(errStream).optJSONObject("error")
-                val message = errObj?.optString("message") ?: ""
-                when {
-                    code == 400 && message.contains("API key not valid", ignoreCase = true) -> "المفتاح غير صالح أو مكتوب خطأ"
-                    code == 404 -> "النموذج $model غير متاح لهذا المفتاح، جرب اختيار نموذج آخر"
-                    code == 429 -> "تجاوزت حد الاستخدام المجاني، انتظر دقيقة وجرب تاني"
-                    else -> "كود الخطأ: $code"
-                }
-            } catch (_: Exception) { "كود الخطأ: $code" }
-            return@withContext Result.failure(Exception(msg))
         } catch (e: Exception) {
-            return@withContext Result.failure(Exception("تعذر الوصول: ${e.localizedMessage ?: "تأكد من الإنترنت"}"))
+            val friendlyMsg = when {
+                e is java.net.SocketTimeoutException -> "انتهت مهلة الاتصال بالنموذج ($model)"
+                e is java.net.UnknownHostException -> "لا يوجد اتصال بالإنترنت للوصول لـ Gemini"
+                else -> e.localizedMessage ?: "حدث خطأ غير متوقع"
+            }
+            Result.failure(Exception(friendlyMsg))
+        } finally {
+            conn?.disconnect()
+        }
+    }
+
+    suspend fun transcribeAudio(audioFile: java.io.File, apiKey: String, model: String = DEFAULT_MODEL): Result<String> = withContext(Dispatchers.IO) {
+        val trimmedKey = apiKey.trim()
+        if (trimmedKey.isBlank()) {
+            return@withContext Result.failure(IllegalStateException("مفتاح Gemini API غير متوفر للتحويل السحابي"))
+        }
+        if (!audioFile.exists() || audioFile.length() < 100) {
+            return@withContext Result.failure(IllegalStateException("الملف الصوتي فارغ"))
+        }
+        var conn: HttpURLConnection? = null
+        try {
+            val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$trimmedKey"
+            val url = URL(endpoint)
+            conn = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 10000
+                readTimeout = 20000
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            }
+            val audioBytes = audioFile.readBytes()
+            val base64Data = android.util.Base64.encodeToString(audioBytes, android.util.Base64.NO_WRAP)
+
+            val root = JSONObject().apply {
+                put("contents", JSONArray().put(
+                    JSONObject().apply {
+                        put("role", "user")
+                        put("parts", JSONArray().apply {
+                            put(JSONObject().apply {
+                                put("inlineData", JSONObject().apply {
+                                    put("mimeType", "audio/wav")
+                                    put("data", base64Data)
+                                })
+                            })
+                            put(JSONObject().apply {
+                                put("text", "استمع بدقة لهذا المقطع الصوتي واكتب الكلام المنطوق باللغة العربية (أو الإنجليزية) تماماً بحروفه فقط، دون أي مقدمات أو تعليقات.")
+                            })
+                        })
+                    }
+                ))
+            }
+
+            conn.outputStream.use { it.write(root.toString().toByteArray(Charsets.UTF_8)) }
+            val code = conn.responseCode
+            if (code in 200..299) {
+                val respText = conn.inputStream.bufferedReader().use { it.readText() }
+                val respObj = JSONObject(respText)
+                val text = respObj.optJSONArray("candidates")
+                    ?.optJSONObject(0)
+                    ?.optJSONObject("content")
+                    ?.optJSONArray("parts")
+                    ?.optJSONObject(0)
+                    ?.optString("text")
+                    ?.trim()
+                    .orEmpty()
+                if (text.isNotBlank()) {
+                    return@withContext Result.success(text)
+                }
+            }
+            return@withContext Result.failure(Exception("لم أتمكن من استخلاص الكلام من الصوت (كود: $code)"))
+        } catch (e: Exception) {
+            return@withContext Result.failure(e)
         } finally {
             conn?.disconnect()
         }
