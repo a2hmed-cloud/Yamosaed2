@@ -1,5 +1,7 @@
 package com.yamosaed.assistant.model
 
+import com.yamosaed.assistant.agent.ActionType
+
 enum class AssistantState {
     IDLE,
     LISTENING,
@@ -15,7 +17,8 @@ data class ChatMessage(
     val text: String,
     val isUser: Boolean,
     val timestamp: Long = System.currentTimeMillis(),
-    val actionDetail: String? = null
+    val actionDetail: String? = null,
+    val actionType: ActionType? = null
 )
 
 data class TaskItem(
@@ -27,7 +30,8 @@ data class TaskItem(
 )
 
 data class GeminiDecision(
-    val action: String, // "chat", "search_music", "music_control", "weather", "alarm", "timer", "task_add", "task_list", "task_clear", "places", "clarify", "none"
+    val action: String,
+    val actionType: ActionType = ActionType.CHAT,
     val query: String = "",
     val reply: String = "",
     val hour: Int = -1,

@@ -1,35 +1,127 @@
 package com.yamosaed.assistant
 
+import com.yamosaed.assistant.agent.ActionType
+import com.yamosaed.assistant.agent.AssistantRouter
 import com.yamosaed.assistant.model.GeminiDecision
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GeminiDecisionTest {
 
     @Test
-    fun testMusicDecisionParsing() {
+    fun testScientificQuestionParsing() {
         val jsonStr = """
             {
-                "action": "search_music",
-                "query": "عمرو دياب",
-                "app": "spotify",
-                "reply": "عيوني، بدورلك على عمرو دياب في سبوتيفاي"
+                "action": "question",
+                "reply": "السماء زرقاء بسبب تشتت رايلي، حيث تتشتت موجات الضوء الأزرق القصيرة في الغلاف الجوي أكثر من بقية الألوان."
             }
         """.trimIndent()
 
         val json = JSONObject(jsonStr)
+        val rawAction = json.optString("action")
+        val actionType = AssistantRouter.parseActionType(rawAction)
+
         val decision = GeminiDecision(
-            action = json.optString("action"),
+            action = rawAction,
+            actionType = actionType,
+            reply = json.optString("reply")
+        )
+
+        assertEquals(ActionType.QUESTION, decision.actionType)
+        assertTrue(decision.reply.contains("تشتت رايلي"))
+    }
+
+    @Test
+    fun testFollowUpDetection() {
+        assertTrue(AssistantRouter.isFollowUp("ليه؟"))
+        assertTrue(AssistantRouter.isFollowUp("وضح اكتر"))
+        assertTrue(AssistantRouter.isFollowUp("اديني مثال"))
+        assertTrue(AssistantRouter.isFollowUp("شغلها"))
+        assertTrue(AssistantRouter.isFollowUp("كمل"))
+    }
+
+    @Test
+    fun testKnowledgeQuestionDetection() {
+        assertTrue(AssistantRouter.isKnowledgeQuestion("ليه السماء زرقاء؟"))
+        assertTrue(AssistantRouter.isKnowledgeQuestion("اشرح قانون نيوتن التاني"))
+        assertTrue(AssistantRouter.isKnowledgeQuestion("ساعدني اذاكر كيمياء"))
+        assertFalse(AssistantRouter.isKnowledgeQuestion("اضبط منبه الساعة 7"))
+        assertFalse(AssistantRouter.isKnowledgeQuestion("شغل اغنية لعمرو دياب"))
+    }
+
+    @Test
+    fun testMusicDecisionWithArtistParsing() {
+        val jsonStr = """
+            {
+                "action": "search_music",
+                "query": "عمرو دياب يا انا يا لا",
+                "app": "spotify",
+                "reply": "عيوني، بدورلك على أغنية يا أنا يا لأ لعمرو دياب"
+            }
+        """.trimIndent()
+
+        val json = JSONObject(jsonStr)
+        val rawAction = json.optString("action")
+        val decision = GeminiDecision(
+            action = rawAction,
+            actionType = AssistantRouter.parseActionType(rawAction),
             query = json.optString("query"),
             reply = json.optString("reply"),
             app = json.optString("app")
         )
 
-        assertEquals("search_music", decision.action)
-        assertEquals("عمرو دياب", decision.query)
+        assertEquals(ActionType.MUSIC_SEARCH, decision.actionType)
+        assertEquals("عمرو دياب يا انا يا لا", decision.query)
         assertEquals("spotify", decision.app)
-        assertEquals("عيوني، بدورلك على عمرو دياب في سبوتيفاي", decision.reply)
+    }
+
+    @Test
+    fun testMediaControlNextTrack() {
+        val jsonStr = """
+            {
+                "action": "music_control",
+                "query": "next",
+                "reply": "تمام، الأغنية اللي بعدها."
+            }
+        """.trimIndent()
+
+        val json = JSONObject(jsonStr)
+        val rawAction = json.optString("action")
+        val decision = GeminiDecision(
+            action = rawAction,
+            actionType = AssistantRouter.parseActionType(rawAction),
+            query = json.optString("query"),
+            reply = json.optString("reply")
+        )
+
+        assertEquals(ActionType.MUSIC_CONTROL, decision.actionType)
+        assertEquals("next", decision.query)
+    }
+
+    @Test
+    fun testExplicitWebSearch() {
+        val jsonStr = """
+            {
+                "action": "web_search",
+                "query": "أحدث أخبار التكنولوجيا",
+                "reply": "فتحت بحث جوجل عن أحدث أخبار التكنولوجيا"
+            }
+        """.trimIndent()
+
+        val json = JSONObject(jsonStr)
+        val rawAction = json.optString("action")
+        val decision = GeminiDecision(
+            action = rawAction,
+            actionType = AssistantRouter.parseActionType(rawAction),
+            query = json.optString("query"),
+            reply = json.optString("reply")
+        )
+
+        assertEquals(ActionType.WEB_SEARCH, decision.actionType)
+        assertEquals("أحدث أخبار التكنولوجيا", decision.query)
     }
 
     @Test
@@ -45,17 +137,30 @@ class GeminiDecisionTest {
         """.trimIndent()
 
         val json = JSONObject(jsonStr)
+        val rawAction = json.optString("action")
         val decision = GeminiDecision(
-            action = json.optString("action"),
+            action = rawAction,
+            actionType = AssistantRouter.parseActionType(rawAction),
             hour = json.optInt("hour"),
             minute = json.optInt("minute"),
             label = json.optString("label"),
             reply = json.optString("reply")
         )
 
-        assertEquals("alarm", decision.action)
+        assertEquals(ActionType.ALARM, decision.actionType)
         assertEquals(8, decision.hour)
         assertEquals(30, decision.minute)
         assertEquals("الشغل", decision.label)
+    }
+
+    @Test
+    fun testSearchClickTokensNormalization() {
+        val tokens = SearchClickService.normalizeAndTokenize("شغل اغنية تملي معاك لعمرو دياب على سبوتيفاي")
+        // "شغل", "اغنية", "على", "سبوتيفاي" should be filtered out
+        assertTrue(tokens.contains("تملي"))
+        assertTrue(tokens.contains("معاك"))
+        assertTrue(tokens.contains("عمرو") || tokens.contains("لعمرو"))
+        assertFalse(tokens.contains("شغل"))
+        assertFalse(tokens.contains("سبوتيفاي"))
     }
 }

@@ -1,12 +1,16 @@
 package com.yamosaed.assistant.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -16,7 +20,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -33,6 +39,7 @@ fun AssistantScreen(
     isGeminiConnected: Boolean,
     onMicClick: () -> Unit,
     onSubmitTextQuery: (String) -> Unit,
+    onCancelOperation: () -> Unit,
     onStopSpeaking: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenHistory: () -> Unit,
@@ -40,6 +47,7 @@ fun AssistantScreen(
 ) {
     var textInput by remember { mutableStateOf("") }
     val verticalScroll = rememberScrollState()
+    val focusManager = LocalFocusManager.current
 
     Column(
         modifier = modifier
@@ -60,12 +68,27 @@ fun AssistantScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column {
-                Text(
-                    text = "يا مساعد",
-                    fontSize = 26.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "يا مساعد",
+                        fontSize = 26.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Surface(
+                        color = Color(0xFF1E3A70),
+                        shape = RoundedCornerShape(6.dp)
+                    ) {
+                        Text(
+                            text = "2.0",
+                            color = Color(0xFF90CAF9),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
                 Text(
                     text = "مساعدك الصوتي المصري الذكي",
                     fontSize = 12.sp,
@@ -78,7 +101,7 @@ fun AssistantScreen(
                     onClick = onOpenSettings,
                     label = {
                         Text(
-                            if (isGeminiConnected) "✓ Gemini" else "محلي",
+                            if (isGeminiConnected) "✓ متصل" else "محلي",
                             fontSize = 11.sp,
                             color = if (isGeminiConnected) Color(0xFF90CAF9) else Color(0xFFFFCC80)
                         )
@@ -106,12 +129,12 @@ fun AssistantScreen(
             }
         }
 
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(18.dp))
 
         // --- Center Stage: Animated Eyes ---
         AssistantEyes(state = state)
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(14.dp))
 
         // Status Indicator
         Text(
@@ -121,6 +144,7 @@ fun AssistantScreen(
                 AssistantState.SUCCESS -> Color(0xFFA5D6A7)
                 AssistantState.LISTENING -> Color(0xFF90CAF9)
                 AssistantState.SPEAKING -> Color(0xFF80DEEA)
+                AssistantState.THINKING -> Color(0xFFCE93D8)
                 else -> Color.White
             },
             fontSize = 15.sp,
@@ -128,6 +152,25 @@ fun AssistantScreen(
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(horizontal = 16.dp)
         )
+
+        // Cancel / Abort Action Button when busy
+        AnimatedVisibility(
+            visible = state == AssistantState.THINKING || state == AssistantState.SPEAKING || state == AssistantState.EXECUTING,
+            enter = fadeIn(),
+            exit = fadeOut()
+        ) {
+            Button(
+                onClick = onCancelOperation,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF372233)),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
+                shape = RoundedCornerShape(20.dp),
+                modifier = Modifier.padding(top = 8.dp)
+            ) {
+                Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(14.dp), tint = Color(0xFFEF9A9A))
+                Spacer(Modifier.width(6.dp))
+                Text("إلغاء الأمر الحالي", color = Color(0xFFEF9A9A), fontSize = 12.sp)
+            }
+        }
 
         Spacer(Modifier.height(14.dp))
 
@@ -188,7 +231,7 @@ fun AssistantScreen(
                         text = replyText,
                         color = Color.White,
                         fontSize = 15.sp,
-                        lineHeight = 22.sp
+                        lineHeight = 23.sp
                     )
 
                     if (state == AssistantState.SPEAKING) {
@@ -206,9 +249,9 @@ fun AssistantScreen(
             }
         }
 
-        Spacer(Modifier.height(18.dp))
+        Spacer(Modifier.height(16.dp))
 
-        // --- Quick Actions Row ---
+        // --- Smart Suggestion Chips ---
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -216,41 +259,43 @@ fun AssistantScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             val chips = listOf(
+                "🌌 ليه السماء زرقاء؟",
+                "⚛️ اشرح قانون نيوتن التاني",
+                "🧪 ساعدني أذاكر كيمياء",
                 "🌤 الطقس في الإسماعيلية",
-                "🕒 الساعة كام",
-                "📅 التاريخ النهارده",
-                "⏱ تايمر 1 دقيقة",
                 "🎵 شغل عمرو دياب",
-                "📋 وريني مهامي",
-                "📍 صيدلية قريبة",
-                "💡 تقدر تعمل إيه"
+                "🕒 الساعة كام دلوقتي",
+                "⏱ تايمر 5 دقائق",
+                "📋 وريني مهامي"
             )
             for (chip in chips) {
                 OutlinedButton(
-                    onClick = { onSubmitTextQuery(chip.substringAfter(" ")) },
+                    onClick = {
+                        focusManager.clearFocus()
+                        onSubmitTextQuery(chip.substring(chip.indexOf(" ") + 1))
+                    },
                     shape = RoundedCornerShape(20.dp),
                     colors = ButtonDefaults.outlinedButtonColors(
                         contentColor = Color(0xFFC6D7F8)
                     ),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                 ) {
                     Text(chip, fontSize = 12.sp)
                 }
             }
         }
 
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(20.dp))
 
         // --- Bottom Interaction Controls ---
-        // Big Voice Mic Button
+        // Big Voice Mic Button with clear status
         Button(
             onClick = onMicClick,
             shape = CircleShape,
             colors = ButtonDefaults.buttonColors(
                 containerColor = if (state == AssistantState.LISTENING) Color(0xFFE53935) else Color(0xFF3D74EB)
             ),
-            modifier = Modifier
-                .size(76.dp),
+            modifier = Modifier.size(76.dp),
             contentPadding = PaddingValues(0.dp)
         ) {
             Icon(
@@ -263,28 +308,25 @@ fun AssistantScreen(
 
         Spacer(Modifier.height(8.dp))
         Text(
-            text = if (state == AssistantState.LISTENING) "اضغط لإيقاف الاستماع" else "اضغط للتحدث",
+            text = if (state == AssistantState.LISTENING) "اضغط لإيقاف التسجيل" else "اضغط للتحدث",
             color = Color(0xFF8FA4CE),
             fontSize = 12.sp
         )
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(14.dp))
 
-        // Optional Text Input Row
+        // Text Input Row with Send Action
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
             OutlinedTextField(
                 value = textInput,
                 onValueChange = { textInput = it },
-                placeholder = { Text("اكتب طلبك لو مش حابب تتكلم...") },
+                placeholder = { Text("اكتب سؤالك أو طلبك هنا...") },
                 singleLine = true,
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                    imeAction = androidx.compose.ui.text.input.ImeAction.Send
-                ),
-                keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(
                     onSend = {
                         if (textInput.isNotBlank()) {
                             focusManager.clearFocus()

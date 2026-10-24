@@ -7,8 +7,10 @@ import com.yamosaed.assistant.model.ChatMessage
 import com.yamosaed.assistant.model.GeminiDecision
 import com.yamosaed.assistant.storage.PreferencesManager
 import com.yamosaed.assistant.storage.TaskManager
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.net.URLEncoder
 
 class AssistantCoordinator(
     private val host: AndroidHost,
@@ -16,7 +18,7 @@ class AssistantCoordinator(
     private val taskManager: TaskManager,
     private val geminiClient: GeminiClient,
     private val localAgent: Agent,
-    private val onFeedback: (reply: String, actionName: String?) -> Unit
+    private val onFeedback: (reply: String, actionName: String?, actionType: ActionType) -> Unit
 ) {
 
     suspend fun processQuery(
@@ -25,64 +27,98 @@ class AssistantCoordinator(
     ) = withContext(Dispatchers.Main) {
         val trimmed = rawQuery.trim()
         if (trimmed.isBlank()) {
-            onFeedback("قولي حاجة أقدر أساعدك فيها يا باشا.", null)
+            onFeedback("قولي حاجة أقدر أساعدك فيها يا باشا.", null, ActionType.CHAT)
             return@withContext
         }
 
         val apiKey = preferencesManager.geminiApiKey
         val screenContext = SearchClickService.visibleScreenText
 
+        // 1. المحاولة عبر Gemini الذكي عند توفر المفتاح
         if (apiKey.isNotBlank()) {
-            val geminiResult = withContext(Dispatchers.IO) {
-                geminiClient.decide(
-                    apiKey = apiKey,
-                    userQuery = trimmed,
-                    screenContext = screenContext,
-                    recentHistory = recentHistory
-                )
-            }
+            try {
+                val geminiResult = withContext(Dispatchers.IO) {
+                    geminiClient.decide(
+                        apiKey = apiKey,
+                        userQuery = trimmed,
+                        screenContext = screenContext,
+                        recentHistory = recentHistory
+                    )
+                }
 
-            if (geminiResult.isSuccess) {
-                val decision = geminiResult.getOrThrow()
-                executeGeminiDecision(decision, trimmed)
-                return@withContext
+                if (geminiResult.isSuccess) {
+                    val decision = geminiResult.getOrThrow()
+                    executeDecision(decision, trimmed)
+                    return@withContext
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // فشل الاتصال - الانتقال الذكي للبديل المحلي أدناه
             }
         }
 
-        // Offline or fallback to local Egyptian rule-based agent
-        val localReply = withContext(Dispatchers.Default) {
-            localAgent.handle(trimmed)
-        }
-        onFeedback(localReply, "محلي")
+        // 2. البديل المحلي الذكي عند عدم توفر المفتاح أو انقطاع الإنترنت
+        handleLocalFallback(trimmed)
     }
 
-    private fun executeGeminiDecision(decision: GeminiDecision, originalQuery: String) {
-        when (decision.action) {
-            "search_music" -> {
+    private fun handleLocalFallback(query: String) {
+        // التحقق أولاً: هل السؤال علمي أو معرفي أو دردشة عادية؟
+        if (AssistantRouter.isKnowledgeQuestion(query) || AssistantRouter.isFollowUp(query)) {
+            val msg = "معلش يا باشا، الأسئلة المعرفية والشرح محتاجة اتصال بالإنترنت ومفتاح Gemini شغال في الإعدادات. تقدر تسألني عن الساعة، المنبه، التايمر، أو مهام يومك محلياً."
+            onFeedback(msg, "معرفة (أوفلاين)", ActionType.QUESTION)
+            return
+        }
+
+        // لو كان أمراً محلياً مدعوماً (منبه، مؤقت، طقس، مهام، وقت)
+        val localReply = localAgent.handle(query)
+        val actionType = when {
+            localReply.contains("المنبه") -> ActionType.ALARM
+            localReply.contains("التايمر") -> ActionType.TIMER
+            localReply.contains("الساعه") || localReply.contains("النهارده") -> ActionType.CHAT
+            localReply.contains("المهام") || localReply.contains("يومك") -> ActionType.TASK_LIST
+            localReply.contains("الطقس") -> ActionType.WEATHER
+            else -> ActionType.CHAT
+        }
+        onFeedback(localReply, "محلي", actionType)
+    }
+
+    private fun executeDecision(decision: GeminiDecision, originalQuery: String) {
+        when (decision.actionType) {
+            ActionType.QUESTION, ActionType.CHAT -> {
+                val reply = decision.reply.ifBlank { "أنا معاك يا فندم، تحب أساعدك بإيه كمان؟" }
+                val label = if (decision.actionType == ActionType.QUESTION) "إجابة علمية" else "محادثة"
+                onFeedback(reply, label, decision.actionType)
+            }
+
+            ActionType.MUSIC_SEARCH -> {
                 val app = if (decision.app.isNotBlank()) decision.app else preferencesManager.defaultMusicApp
                 val query = decision.query.ifBlank { originalQuery }
+
+                // تفعيل خدمة إمكانية الوصول لاختيار الأغنية بنسبة تطابق دقيقة
                 val armed = host.armClick(app, query) { ok ->
                     if (ok) {
-                        onFeedback("لقيت $query في $app وشغلتها.", "تشغيل موسيقى")
+                        onFeedback("لقيت الأغنية في $app وشغّلتها بنجاح يا فندم.", "تم التشغيل", ActionType.MUSIC_SEARCH)
                     } else {
-                        onFeedback("فتحت $app للبحث عن $query. اختار الأغنية من الشاشة.", "بحث موسيقى")
+                        onFeedback("فتحت $app للبحث عن: $query. اضغط على النتيجة لتشغيلها.", "بحث موسيقى", ActionType.MUSIC_SEARCH)
                     }
                 }
+
                 val opened = host.openMusicSearch(app, query)
                 val reply = if (!opened) {
-                    "مش قادر أفتح تطبيق الموسيقى ($app) دلوقتي."
+                    "مش قادر أفتح تطبيق $app على الجهاز دلوقتي."
                 } else if (armed) {
                     decision.reply.ifBlank { "بدور على $query في $app وهختارها تلقائيًا..." }
                 } else {
-                    decision.reply.ifBlank { "فتحت البحث عن $query في $app. فعّل إمكانية الوصول للاختيار التلقائي." }
+                    decision.reply.ifBlank { "فتحت البحث عن $query في $app. تقدر تفعّل إمكانية الوصول للاختيار التلقائي." }
                 }
-                onFeedback(reply, "موسيقى: $query")
+                onFeedback(reply, "موسيقى: $query", ActionType.MUSIC_SEARCH)
             }
 
-            "music_control" -> {
-                val action = when (decision.query.lowercase()) {
-                    "next" -> MusicAction.NEXT
-                    "previous", "prev" -> MusicAction.PREV
+            ActionType.MUSIC_CONTROL -> {
+                val action = when (decision.query.lowercase().trim()) {
+                    "next", "skip" -> MusicAction.NEXT
+                    "previous", "prev", "back" -> MusicAction.PREV
                     else -> MusicAction.TOGGLE
                 }
                 val success = host.musicControl(action)
@@ -91,20 +127,20 @@ class AssistantCoordinator(
                     val trackSuffix = if (!currentTrack.isNullOrBlank()) " ($currentTrack)" else ""
                     decision.reply.ifBlank { "تمام يا فندم$trackSuffix." }
                 } else {
-                    "مافيش تطبيق موسيقى نشط حاليًا. شغّل Spotify أو فعّل وصول الإشعارات."
+                    "مافيش تطبيق موسيقى نشط حالياً. شغّل Spotify الأول أو فعّل وصول الإشعارات من الإعدادات."
                 }
-                onFeedback(reply, "تحكم بالوسائط")
+                onFeedback(reply, "تحكم بالوسائط", ActionType.MUSIC_CONTROL)
             }
 
-            "weather" -> {
+            ActionType.WEATHER -> {
                 val city = decision.query.ifBlank { preferencesManager.homeCity }
-                onFeedback(decision.reply.ifBlank { "ثواني بجيب طقس $city..." }, "جلب الطقس")
+                onFeedback(decision.reply.ifBlank { "ثواني بجيبلك طقس $city..." }, "جلب الطقس", ActionType.WEATHER)
                 host.weather(city) { resultText ->
-                    onFeedback(resultText, "طقس: $city")
+                    onFeedback(resultText, "طقس: $city", ActionType.WEATHER)
                 }
             }
 
-            "alarm" -> {
+            ActionType.ALARM -> {
                 val hour = if (decision.hour in 0..23) decision.hour else 7
                 val minute = if (decision.minute in 0..59) decision.minute else 0
                 val label = decision.label.ifBlank { "يا مساعد" }
@@ -115,12 +151,12 @@ class AssistantCoordinator(
                 } else {
                     "مش قادر أفتح تطبيق الساعة لضبط المنبه."
                 }
-                onFeedback(reply, "منبه $timeStr")
+                onFeedback(reply, "منبه $timeStr", ActionType.ALARM)
             }
 
-            "timer" -> {
+            ActionType.TIMER -> {
                 val sec = if (decision.seconds > 0) decision.seconds else 60L
-                val ok = host.setTimer(sec, decision.label.ifBlank { "تايمر" })
+                val ok = host.setTimer(sec, decision.label.ifBlank { "مؤقت" })
                 val durationText = when {
                     sec >= 3600 && sec % 3600 == 0L -> "${sec / 3600} ساعة"
                     sec >= 60 && sec % 60 == 0L -> "${sec / 60} دقيقة"
@@ -131,17 +167,17 @@ class AssistantCoordinator(
                 } else {
                     "محتاج تسمح بالمنبهات الدقيقة من إعدادات النظام الأول."
                 }
-                onFeedback(reply, "تايمر $durationText")
+                onFeedback(reply, "تايمر $durationText", ActionType.TIMER)
             }
 
-            "task_add" -> {
+            ActionType.TASK_ADD -> {
                 val taskText = decision.query.ifBlank { originalQuery }
                 taskManager.addTask(taskText)
                 val reply = decision.reply.ifBlank { "عيوني، سجلت في مهامك: $taskText" }
-                onFeedback(reply, "إضافة مهمة")
+                onFeedback(reply, "إضافة مهمة", ActionType.TASK_ADD)
             }
 
-            "task_list" -> {
+            ActionType.TASK_LIST -> {
                 val tasks = taskManager.getTasks()
                 val reply = if (tasks.isEmpty()) {
                     "لسه ما سجلتش أي مهام في يومك يا باشا."
@@ -149,35 +185,42 @@ class AssistantCoordinator(
                     val formatted = tasks.joinToString("\n") { (if (it.isCompleted) "✓ " else "• ") + it.text }
                     decision.reply.ifBlank { "مهامك المسجلة:\n$formatted" }
                 }
-                onFeedback(reply, "عرض المهام")
+                onFeedback(reply, "عرض المهام", ActionType.TASK_LIST)
             }
 
-            "task_clear" -> {
+            ActionType.TASK_CLEAR -> {
                 taskManager.clearTasks()
                 val reply = decision.reply.ifBlank { "مسحت كل المهام من يومك." }
-                onFeedback(reply, "مسح المهام")
+                onFeedback(reply, "مسح المهام", ActionType.TASK_CLEAR)
             }
 
-            "places" -> {
+            ActionType.MAPS -> {
                 val placeQuery = decision.query.ifBlank { originalQuery }
-                val url = "https://www.google.com/maps/search/?api=1&query=" + java.net.URLEncoder.encode(placeQuery, "UTF-8")
+                val url = "https://www.google.com/maps/search/?api=1&query=" + URLEncoder.encode(placeQuery, "UTF-8")
                 val ok = host.openUrl(url)
                 val reply = if (ok) {
                     decision.reply.ifBlank { "فتحت خرائط Google للبحث عن $placeQuery." }
                 } else {
                     "تعذر فتح تطبيق الخرائط."
                 }
-                onFeedback(reply, "خرائط: $placeQuery")
+                onFeedback(reply, "خرائط: $placeQuery", ActionType.MAPS)
             }
 
-            "clarify", "chat" -> {
-                val reply = decision.reply.ifBlank { "أنا معاك يا فندم، تحب أساعدك بإيه؟" }
-                onFeedback(reply, "محادثة")
+            ActionType.WEB_SEARCH -> {
+                val searchQuery = decision.query.ifBlank { originalQuery }
+                val url = "https://www.google.com/search?q=" + URLEncoder.encode(searchQuery, "UTF-8")
+                val ok = host.openUrl(url)
+                val reply = if (ok) {
+                    decision.reply.ifBlank { "فتحت بحث Google عن: $searchQuery" }
+                } else {
+                    "تعذر فتح المتصفح للبحث."
+                }
+                onFeedback(reply, "بحث ويب", ActionType.WEB_SEARCH)
             }
 
-            else -> {
-                val localReply = localAgent.handle(originalQuery)
-                onFeedback(localReply, "محلي")
+            ActionType.CLARIFY -> {
+                val reply = decision.reply.ifBlank { "مش متأكد من قصدك يا باشا، تحب أساعدك في إيه بالظبط؟" }
+                onFeedback(reply, "توضيح", ActionType.CLARIFY)
             }
         }
     }
